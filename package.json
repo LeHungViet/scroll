@@ -1,0 +1,17 @@
+{
+  "name": "@agentpro/scroll",
+  "version": "0.8.0",
+  "description": "SCROLL - a harness for agentic loops. Build AI agents as folders, not code: filesystem-native, vendor-neutral, with risk-tiered permissions, grounding, and a loop-engineering outer loop.",
+  "type": "module",
+  "bin": { "scroll": "bin/scroll.js" },
+  "engines": { "node": ">=20" },
+  "files": ["bin", "lib", "templates", "SPEC.md", "AGENTS.md", "README.md", "LICENSE"],
+  "scripts": { "test": "node test/smoke.mjs && node test/runtime.smoke.mjs && node test/v14.smoke.mjs && node test/installers.smoke.mjs" },
+  "keywords": ["loop-engineering","agent-harness","agentic","agentic-loops","ai-agents","autonomous-agents","agent-framework","llm","markdown","cli","vendor-neutral","multi-agent","mcp","claude","codex","gemini"],
+  "homepage": "https://scroll.dragonos.app",
+  "repository": { "type": "git", "url": "git+https://github.com/LeHungViet/scroll.git" },
+  "bugs": { "url": "https://github.com/LeHungViet/scroll/issues" },
+  "author": "Le Hung Viet (Agent Pro)",
+  "license": "MIT",
+  "dependencies": {}
+}
