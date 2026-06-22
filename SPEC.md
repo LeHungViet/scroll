@@ -532,3 +532,16 @@ You repeat the user's message back, clearly and briefly.
 This spec is versioned with semver. Renderings and validators declare the spec version they target. Backward-incompatible changes increment MAJOR. Agents declare their own `version` independently of the spec version.
 
 *SCROLL Specification v1.4 · reference implementation `@agentpro/scroll` 0.8.0 — Agent Pro. Companion: `README.md`, `AGENTS.md`, `templates/agent/`, `templates/work/LOOP.md`.*
+
+---
+
+## §24–27 — v1.5 · Trackable · Self-Driving · Honest-on-Failure (2026-06-22)
+
+LOOP.md fields mới (ĐỀU OPTIONAL — backward-compat; `validateLoop` chỉ check kiểu khi có):
+
+- **§24 `ledger:`** — bảng theo dõi người-đọc XUYÊN-run. `local://path.csv|md` (core, 0-dep) | `notion://` · `sheets://` · `excel://` (adapter app-layer đọc `runs/loop-<id>/ledger.jsonl`). Sau MỖI output → 1 dòng: `ts·loop·iteration·task·status·tries·proof·digest`. Chưa cấu hình + chạy qua agent/skill → **PHẢI hỏi user nơi lưu** (không mặc định cloud). CLI thuần → default `local://runs/ledger.csv`.
+- **§25 `planner:`** — lệnh chạy TRƯỚC vòng lặp để **SINH backlog** (self-planning: study reference → enumerate việc chưa-làm → emit WORK). Không có → y v1.4 (đọc work có sẵn).
+- **§26 `max_tries_per_task:`** (default 3) — mỗi output thử tối đa N; pass → dừng sớm; cạn N + fail → ghi ledger `failed` + proof → **CONTINUE task kế**. Halt CHỈ khi `gate_denied` (ngay) hoặc `verify_fail` ∈ `halt_on` (sau khi cạn N — backward-compat).
+- **§27 Proof-pack** — `result.proof` ghi vào ledger; **fail PHẢI có proof** (bằng chứng đã thử). Sinh artifact trực quan = app-layer; core bắt buộc CÓ + GHI.
+
+Impl: `lib/loop.js` (validateLoop + runLoop) + `lib/ledger.js`. Test: `test/v15.smoke.mjs` (6/6). App-layer (Notion/Sheets push · vision-judge · render) KHÔNG vào core. Chi tiết: `../SCROLL-v1.5-Upgrade.md`.
