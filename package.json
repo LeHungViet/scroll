@@ -1,6 +1,6 @@
 {
   "name": "@agentpro/scroll",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "SCROLL — a harness for agentic loops. Build AI agents as folders, not code: filesystem-native, vendor-neutral, with risk-tiered permissions, grounding, and a loop-engineering outer loop.",
   "keywords": [
     "loop-engineering",
