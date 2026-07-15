@@ -2,6 +2,9 @@
 id: case-03-boundary
 runs: 5
 pass_consistency: 0.8
+fixture:                       # §30 — see case-example.md for the full explanation
+  provenance: product-path
+  setup: none — the input is self-contained (no external state to arm)
 ---
 
 ## Input

@@ -12,7 +12,7 @@ scroll run  researcher --task "…"     # inner loop: one harnessed run — capp
 scroll loop LOOP.md                   # outer loop: schedule + find work + stop conditions
 ```
 
-`MIT` · `Node ≥ 20` · **Spec v1.6** · **`@agentpro/scroll` 0.10.0** · vendor-neutral — runs on Claude · OpenAI/Codex · Gemini · Grok
+`MIT` · `Node ≥ 20` · **Spec v1.6** · **`@agentpro/scroll` 0.11.0** · vendor-neutral — runs on Claude · OpenAI/Codex · Gemini · Grok
 
 > **GitHub topics:** `loop-engineering` · `agent-harness` · `agentic` · `agentic-loops` · `ai-agents` · `autonomous-agents` · `llm` · `mcp`
 
@@ -43,9 +43,13 @@ The thesis in one line: **SCROLL doesn't try to make the model smarter — it ma
 
 ---
 
-## Implementation status (2026-06-21 · v1.4)
+## Implementation status (2026-07-15 · v1.6)
 
-**Built & tested** (`test/` — **50 checks green**: 9 core + 14 runtime + 16 v1.4 + 11 installers):
+**Built & tested** (`test/` — **73 checks green**: 9 core + 14 runtime + 16 v1.4 + 6 v1.5 + 10 v1.6 + 11 installers + 7 audit):
+
+- **§28 Effect confirmation** — a write is not "done" because the call returned a non-error. `lib/effects.js` re-reads the state with a **separate** probe and checks a declared predicate; a mismatch emits `effect_unconfirmed` and fails the step. `financial`/`destructive` writes with no `confirm` are blocked (fail-closed) and flagged by `scroll audit`. Corollary: an unknown input field is rejected, never dropped — silently dropping input is how a system reports success for work it never did.
+- **§29 Ungraded is not pass** — `verdict` is ternary (`pass | fail | ungraded`). "No check ran" is counted separately and never folded into `ok`; a judge that could not run says nothing, so it grades `ungraded` rather than `fail`.
+- **§30 Fixture provenance** — gold cases declare `fixture.provenance` (`product-path | recorded | synthetic`); `scroll eval` prints it beside every verdict and `scroll audit` flags a suite built only on hand-made fixtures — the shape where a scheduler's *execute* path is green while its *arm* path was never run once.
 
 - **Inner loop** `scroll run` — deterministic DAG advance from `WORK.md`, single controller, cost-gate, append-only `blackboard/`, hard caps + circuit breaker, stable-prefix caching, model routing, deterministic non-LLM steps, verify-before-done, per-tick checkpoint, `events.jsonl`.
 - **Risk-tiered permissions** — five tiers (`read_only · reversible_write · external_comm · financial · destructive`), enforced at the **action boundary in code** (not the prompt). Risk is declared as data in `.mcp.json` / `IDENTITY.security`, never read from prose.

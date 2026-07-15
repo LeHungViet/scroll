@@ -4,6 +4,15 @@ id: case-01-renewable-cost
 runs: 5                       # run this many times to measure consistency (non-determinism)
 pass_consistency: 0.8         # fraction of runs that must pass ALL machine checks
 judge_min: 4.0
+# §30 — where did this case's PRECONDITION come from? Required.
+#   product-path : built by the product's own path (the one a user takes). Needs `setup:`. ← default
+#   recorded     : captured from a real environment (carry a hash/source).
+#   synthetic    : hand-built. Needs `justification:` — and never counts as evidence for the
+#                  path that would otherwise have created the precondition.
+# This case needs no external state: the source pool is IN the prompt, so nothing was hand-patched.
+fixture:
+  provenance: product-path
+  setup: none — the input is self-contained (no external state to arm)
 ---
 
 ## Input

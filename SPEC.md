@@ -1,6 +1,6 @@
 # SCROLL Specification
 
-**Version:** 1.6 · **Status:** Draft (runtime built; §28–30 specified, not yet implemented) · **Date:** 2026-07-15 · **Reference impl:** `@agentpro/scroll` 0.10.0
+**Version:** 1.6 · **Status:** Draft (runtime built; §28–30 implemented) · **Date:** 2026-07-15 · **Reference impl:** `@agentpro/scroll` 0.11.0
 
 > **v1.4 (the harness + loop-engineering layer):** §21 risk-tiered permission matrix (5 tiers, enforced at the action boundary) · §22 grounding pre-check · §23 `LOOP.md` outer loop. Plus record corrections: `scroll eval` is **built** (not roadmap); the approval file lives under `control/approvals/<id>` (§18.3).
 
@@ -531,7 +531,7 @@ You repeat the user's message back, clearly and briefly.
 
 This spec is versioned with semver. Renderings and validators declare the spec version they target. Backward-incompatible changes increment MAJOR. Agents declare their own `version` independently of the spec version.
 
-*SCROLL Specification v1.6 · reference implementation `@agentpro/scroll` 0.10.0 — Agent Pro. Companion: `README.md`, `AGENTS.md`, `templates/agent/`, `templates/work/LOOP.md`.*
+*SCROLL Specification v1.6 · reference implementation `@agentpro/scroll` 0.11.0 — Agent Pro. Companion: `README.md`, `AGENTS.md`, `templates/agent/`, `templates/work/LOOP.md`.*
 
 ---
 
@@ -550,7 +550,7 @@ Reference impl: `lib/loop.js` (`validateLoop` + `runLoop`) + `lib/ledger.js`.
 
 ## §28 — Effect confirmation (v1.6)
 
-> **Status: specified, not yet implemented** (`lib/effects.js` pending). This spec does not claim behaviour the reference implementation lacks — see §29.
+> Reference impl: `lib/effects.js` (`confirmEffect` · `evalExpect` · `rejectUnknownFields`), audited by `scroll audit`.
 
 A write that *reports* success is not evidence that the write *happened*.
 
@@ -578,7 +578,7 @@ Events: `effect_confirmed { tool, probe, ok, observed }` · `effect_unconfirmed 
 
 ## §29 — Ungraded is not pass (v1.6)
 
-> **Status: specified, not yet implemented** (`lib/eval.js` returns a boolean today).
+> Reference impl: `lib/eval.js` — `case.verdict` is `'pass' | 'fail' | 'ungraded'`; `report.ungraded` counts them; `ok` requires ≥1 graded case and every graded case passing.
 
 A verdict is **ternary**, never boolean:
 
@@ -600,7 +600,7 @@ Rationale: a harness in which "not measured" and "measured and good" are indisti
 
 ## §30 — Fixture provenance (v1.6)
 
-> **Status: specified, not yet implemented** (`lib/eval.js` + `lib/audit.js` pending).
+> Reference impl: `lib/eval.js` (`parseFixture`) prints provenance beside every verdict; `scroll audit` warns on a missing/invalid provenance and on a suite that is entirely `synthetic`. The shipped scaffold declares its own provenance.
 
 §8 requires grading the end state rather than the execution path. It is silent on **where the precondition came from** — and that silence lets a green suite prove nothing.
 

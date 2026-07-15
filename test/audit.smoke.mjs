@@ -10,12 +10,42 @@ let pass = 0, fail = 0;
 const t = (name, fn) => { try { fn(); console.log('  \x1b[32m✔\x1b[0m', name); pass++; } catch (e) { console.log('  \x1b[31m✖\x1b[0m', name, '—', e.message); fail++; } };
 const mkroot = () => fs.mkdtempSync(path.join(os.tmpdir(), 'scroll-audit-'));
 
-t('clean scaffolded agent → PASS (warns on <3 evals, zero errors)', () => {
+t('clean scaffolded agent → PASS, zero errors, and ships the 3 gold cases L1 requires', () => {
   const root = mkroot(); scaffold('atlas', root);
   const r = auditRepo(root);
   assert.equal(r.verdict, 'pass', `expected pass, errorCount=${r.errorCount}`);
   assert.equal(r.errorCount, 0);
-  assert.ok(r.agents[0].warnings.some((w) => /eval/.test(w)), 'warns about <3 gold evals');
+  // The scaffold ships 3 gold cases (L1), so the "<3 gold evals" warning must NOT fire.
+  // This assertion used to be `warnings.some(/eval/)` — written when the template shipped fewer
+  // than 3 cases. The template was later improved to 3; the test was never updated, so it failed
+  // for a stale reason. Worse: ANY warning whose text merely contains "eval" (e.g. a path like
+  // "evals/case-03.md: …") silently satisfied it — a loose matcher that turns green for the wrong
+  // reason is the same defect §29 exists to prevent. Assert the exact thing we mean.
+  assert.equal(r.agents[0].evalCount, 3, 'scaffold must ship 3 gold cases');
+  assert.ok(!r.agents[0].warnings.some((w) => /gold eval case\(s\)/.test(w)),
+    'a 3-case scaffold must not warn about too few gold cases');
+});
+
+t('scaffolded gold cases declare fixture provenance (§30) — the scaffold obeys its own spec', () => {
+  const root = mkroot(); scaffold('atlas', root);
+  const r = auditRepo(root);
+  assert.ok(!r.agents[0].warnings.some((w) => /provenance not declared/.test(w)),
+    'the shipped templates must declare fixture.provenance: ' + r.agents[0].warnings.join(' | '));
+});
+
+t('an agent whose gold cases are ALL hand-built gets flagged (§30)', () => {
+  const root = mkroot(); scaffold('atlas', root);
+  const evals = path.join(root, 'agents', 'atlas', 'evals');
+  for (const f of fs.readdirSync(evals).filter((x) => x.endsWith('.md') && x !== 'rubric.md')) {
+    const p = path.join(evals, f);
+    fs.writeFileSync(p, fs.readFileSync(p, 'utf8')
+      .replace(/provenance: product-path/, 'provenance: synthetic')
+      .replace(/setup: [^\n]*/, 'justification: hand-built for the test'));
+  }
+  const r = auditRepo(root);
+  assert.ok(r.agents[0].warnings.some((w) => /every gold case uses a hand-built fixture/.test(w)),
+    'all-synthetic suite leaves the arm/setup path unverified — audit must say so');
+  assert.equal(r.verdict, 'pass', 'provenance is a warning (linter triage), not a hard error');
 });
 
 t('banned infra dependency → FAIL', () => {
