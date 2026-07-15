@@ -1,6 +1,6 @@
 # SCROLL Specification
 
-**Version:** 1.4 · **Status:** Draft (runtime built) · **Date:** 2026-06-21 · **Reference impl:** `@agentpro/scroll` 0.8.0
+**Version:** 1.6 · **Status:** Draft (runtime built; §28–30 specified, not yet implemented) · **Date:** 2026-07-15 · **Reference impl:** `@agentpro/scroll` 0.10.0
 
 > **v1.4 (the harness + loop-engineering layer):** §21 risk-tiered permission matrix (5 tiers, enforced at the action boundary) · §22 grounding pre-check · §23 `LOOP.md` outer loop. Plus record corrections: `scroll eval` is **built** (not roadmap); the approval file lives under `control/approvals/<id>` (§18.3).
 
@@ -226,7 +226,7 @@ A loader **MUST** assemble an agent's context in two regions, in this order:
 ```
 
 - The stable prefix **MUST** be byte-identical across ticks of the same agent so provider prompt-caching hits. Tools **MUST NOT** interleave volatile content into the prefix.
-- Loaders targeting Anthropic **MUST** set an explicit cache TTL (the provider default is short); cache reads bill at ~0.1× input.
+- Where a provider's default cache lifetime is short, loaders **MUST** set an explicit cache TTL; cached reads are typically billed at a small fraction of fresh input. Consult the provider's caching documentation — this spec fixes no vendor's numbers.
 - Skills are referenced by **index** (name + one-line description) in the prefix; full skill bodies load **on demand** (progressive disclosure). Skill *content* is out of scope for this spec — SCROLL specifies only the cheap-load mechanism.
 
 ---
@@ -531,17 +531,110 @@ You repeat the user's message back, clearly and briefly.
 
 This spec is versioned with semver. Renderings and validators declare the spec version they target. Backward-incompatible changes increment MAJOR. Agents declare their own `version` independently of the spec version.
 
-*SCROLL Specification v1.4 · reference implementation `@agentpro/scroll` 0.8.0 — Agent Pro. Companion: `README.md`, `AGENTS.md`, `templates/agent/`, `templates/work/LOOP.md`.*
+*SCROLL Specification v1.6 · reference implementation `@agentpro/scroll` 0.10.0 — Agent Pro. Companion: `README.md`, `AGENTS.md`, `templates/agent/`, `templates/work/LOOP.md`.*
 
 ---
 
-## §24–27 — v1.5 · Trackable · Self-Driving · Honest-on-Failure (2026-06-22)
+## §24–27 — v1.5 · Trackable · Self-Driving · Honest-on-Failure
 
-LOOP.md fields mới (ĐỀU OPTIONAL — backward-compat; `validateLoop` chỉ check kiểu khi có):
+New `LOOP.md` fields (all OPTIONAL — backward compatible; `validateLoop` type-checks them only when present):
 
-- **§24 `ledger:`** — bảng theo dõi người-đọc XUYÊN-run. `local://path.csv|md` (core, 0-dep) | `notion://` · `sheets://` · `excel://` (adapter app-layer đọc `runs/loop-<id>/ledger.jsonl`). Sau MỖI output → 1 dòng: `ts·loop·iteration·task·status·tries·proof·digest`. Chưa cấu hình + chạy qua agent/skill → **PHẢI hỏi user nơi lưu** (không mặc định cloud). CLI thuần → default `local://runs/ledger.csv`.
-- **§25 `planner:`** — lệnh chạy TRƯỚC vòng lặp để **SINH backlog** (self-planning: study reference → enumerate việc chưa-làm → emit WORK). Không có → y v1.4 (đọc work có sẵn).
-- **§26 `max_tries_per_task:`** (default 3) — mỗi output thử tối đa N; pass → dừng sớm; cạn N + fail → ghi ledger `failed` + proof → **CONTINUE task kế**. Halt CHỈ khi `gate_denied` (ngay) hoặc `verify_fail` ∈ `halt_on` (sau khi cạn N — backward-compat).
-- **§27 Proof-pack** — `result.proof` ghi vào ledger; **fail PHẢI có proof** (bằng chứng đã thử). Sinh artifact trực quan = app-layer; core bắt buộc CÓ + GHI.
+- **§24 `ledger:`** — a human-readable tracking table that spans runs. `local://path.csv|md` (core, zero-dep), or an external URI scheme resolved by an **app-layer adapter** reading `runs/loop-<id>/ledger.jsonl` (the core ships no third-party client). After **every** output — pass or fail — a runner **MUST** append one row: `ts · loop · iteration · task · status · tries · proof · digest`. If `ledger` is unset and the loop is driven through an agent or skill, the runner **MUST** ask the operator where to store it and **MUST NOT** silently default to a remote store. A bare CLI defaults to `local://runs/ledger.csv`.
+- **§25 `planner:`** — a command executed **once, before** the loop, that **generates** the backlog (self-planning: study a reference → enumerate outstanding work → emit `WORK`). It is a plain command, deterministic, outside the model. Absent → v1.4 behaviour (consume pre-existing work).
+- **§26 `max_tries_per_task:`** (default 3) — each task gets N tries of its own; pass → stop early. Exhausted and still failing → record ledger `status: failed` + proof, then **CONTINUE to the next task**. Halt only on `gate_denied` (immediately, no retry) or when `verify_fail ∈ halt_on` (after exhausting N — backward compat). A try-budget is **per task**, never global.
+- **§27 Proof-pack** — `result.proof` (a path/URI to inspectable evidence) is recorded in the ledger. A **failure MUST carry proof** of what was attempted; silent failure is non-conformant. Rendering visual evidence is app-layer; the core mandates only that proof **exists** and is **recorded**.
 
-Impl: `lib/loop.js` (validateLoop + runLoop) + `lib/ledger.js`. Test: `test/v15.smoke.mjs` (6/6). App-layer (Notion/Sheets push · vision-judge · render) KHÔNG vào core. Chi tiết: `../SCROLL-v1.5-Upgrade.md`.
+Reference impl: `lib/loop.js` (`validateLoop` + `runLoop`) + `lib/ledger.js`.
+
+---
+
+## §28 — Effect confirmation (v1.6)
+
+> **Status: specified, not yet implemented** (`lib/effects.js` pending). This spec does not claim behaviour the reference implementation lacks — see §29.
+
+A write that *reports* success is not evidence that the write *happened*.
+
+- A runner **MUST** classify an action as a WRITE when it mutates state outside the run's own memory (tiers `reversible_write | external_comm | financial | destructive`, §21).
+- A WRITE **MUST NOT** be considered successful merely because the call returned a non-error status. Self-reported success is not evidence.
+- The runner **MUST** confirm the effect with an **independent read-back**. The read-back **MUST** be a separate read operation; the write's own response **MUST NOT** be used as its confirmation.
+- If the write reports success but the read-back does not satisfy `expect`, the runner **MUST** emit `effect_unconfirmed` and mark the step **failed**. This is a failure, not a warning.
+- A WRITE at tier `financial | destructive` with no declared `confirm` **MUST** be flagged by `scroll audit`; a conformant runner blocks by default (fail-closed).
+
+Declared as data, alongside `risk`/`ground` (§21.3, §22) — never in prose:
+
+```json
+"issue_invoice": {
+  "risk": "financial",
+  "ground": ["product_code", "amount"],
+  "confirm": { "probe": "lookup_invoice", "expect": "$.status == 'issued'" }
+}
+```
+
+Events: `effect_confirmed { tool, probe, ok, observed }` · `effect_unconfirmed { tool, expected, observed }`.
+
+**Corollary — fail-closed on unknown input.** An interface that receives a field it does not understand **MUST** reject the request (a 4xx-equivalent carrying `rejected[]`) and **MUST NOT** ignore it silently. Silently dropping input is how a system comes to report success for work it never did; an agent reading that success will then report it onward in perfect good faith. The agent is not lying — the interface is.
+
+---
+
+## §29 — Ungraded is not pass (v1.6)
+
+> **Status: specified, not yet implemented** (`lib/eval.js` returns a boolean today).
+
+A verdict is **ternary**, never boolean:
+
+| verdict | meaning |
+|---|---|
+| `pass` | graded — at least one check actually ran, and every check passed |
+| `fail` | graded — a check ran and failed |
+| `ungraded` | **no check ran** — no rubric declared, tooling absent, or the checker itself errored |
+
+- `ungraded` **MUST NOT** be coerced to `pass` anywhere: API, UI, ledger (§24), digest, or gate.
+- A UI **MUST** render `ungraded` distinctly from `pass` — a neutral marker, never a check-mark.
+- A `must-approve` gate (§21) treats `ungraded` as `fail` (fail-closed).
+- Ledger `status` accepts `ungraded`; a digest (§18) **MUST** count it separately. "3 done" where two were never graded is a false report.
+- When a checker cannot run (missing dependency, unavailable tool), its result is `ungraded` — **never** `pass`.
+
+Rationale: a harness in which "not measured" and "measured and good" are indistinguishable renders every green number it emits meaningless — and makes §27 proof worthless.
+
+---
+
+## §30 — Fixture provenance (v1.6)
+
+> **Status: specified, not yet implemented** (`lib/eval.js` + `lib/audit.js` pending).
+
+§8 requires grading the end state rather than the execution path. It is silent on **where the precondition came from** — and that silence lets a green suite prove nothing.
+
+If a case's precondition was created **by hand** rather than by the product's own path, the case says nothing about that path. Every gold case (§8) **MUST** declare its fixture's provenance:
+
+```yaml
+---
+id: case-01-...
+fixture:
+  provenance: product-path | recorded | synthetic   # REQUIRED
+  setup: <command/path that creates the precondition>   # REQUIRED when provenance = product-path
+---
+```
+
+- `product-path` — the precondition is produced by the product's own path, the one an operator takes. **Default.**
+- `recorded` — captured from a real environment; carries a hash and a source.
+- `synthetic` — hand-constructed. **MUST** carry a `justification`, and **MUST NOT** count as evidence for the path that would otherwise have created that precondition.
+- Any capability that carries state (a schedule, an account, a permission, a subscription) **MUST** have at least one `product-path` case covering its **arm/setup** path — not only its **execute** path. Exercising `execute` against a hand-made precondition leaves `arm` completely unverified while the suite stays green.
+- `scroll eval` **MUST** print provenance beside every verdict; `scroll audit` **MUST** warn when a capability is covered only by `synthetic` cases.
+
+**Never hand-mutate the state of the system you are grading.** If a fixture must be hand-patched before a case will run, the case has just found a defect — not an inconvenience.
+
+---
+
+## Design note — §28–30 and the failure they answer
+
+§21 (risk), §22 (grounding) and §1.4 (enforce at the tool boundary) compensate for weaknesses of the *model*: it does not understand consequences, it hallucinates identifiers, it will not stop on its own.
+
+§28–30 compensate for weaknesses of the *engineers and operators*:
+
+| mechanism | compensates for |
+|---|---|
+| §28 effect confirmation | a system that reports success for work it never performed — which an agent then relays in good faith |
+| §29 ungraded ≠ pass | "no yardstick" being indistinguishable from "measured and good" |
+| §30 fixture provenance | hand-patching a precondition and calling the result acceptance |
+
+A harness that only guards against the model is half a harness.

@@ -12,7 +12,7 @@ scroll run  researcher --task "…"     # inner loop: one harnessed run — capp
 scroll loop LOOP.md                   # outer loop: schedule + find work + stop conditions
 ```
 
-`MIT` · `Node ≥ 20` · **Spec v1.4** · **`@agentpro/scroll` 0.8.0** · works with Claude · OpenAI/Codex · Gemini
+`MIT` · `Node ≥ 20` · **Spec v1.6** · **`@agentpro/scroll` 0.10.0** · vendor-neutral — runs on Claude · OpenAI/Codex · Gemini · Grok
 
 > **GitHub topics:** `loop-engineering` · `agent-harness` · `agentic` · `agentic-loops` · `ai-agents` · `autonomous-agents` · `llm` · `mcp`
 
