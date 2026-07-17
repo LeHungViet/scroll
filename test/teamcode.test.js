@@ -86,6 +86,21 @@ test('grokArgs: default = read-first QA profile (dontAsk, deny Write, workspace 
   assert.ok(ei > -1 && args[ei + 1] === 'high');
 });
 
+test('grokArgs: read-first profile leaves no tool undecided (dontAsk cancels the whole run otherwise)', () => {
+  const args = grokArgs({});
+  const allows = args.reduce((acc, a, i) => (a === '--allow' ? acc.concat(args[i + 1]) : acc), []);
+  // An unscoped tool name is the only form that decides every call for that tool.
+  assert.ok(allows.includes('Bash'), 'Bash must be allowed unscoped or unlisted commands cancel the run');
+  for (const a of allows) {
+    assert.ok(!/\(/.test(a), `prefix-scoped allow rule ${a} leaves sibling commands undecided -> Cancelled`);
+  }
+  // Boundary still carried by deny (deny wins over allow, and is graceful).
+  const denies = args.reduce((acc, a, i) => (a === '--deny' ? acc.concat(args[i + 1]) : acc), []);
+  for (const d of ['Write', 'Edit', 'Bash(rm *)', 'Bash(git push*)', 'Bash(sudo *)']) {
+    assert.ok(denies.includes(d), `deny rule ${d} missing`);
+  }
+});
+
 test('grokArgs: sandbox write → acceptEdits, no deny list', () => {
   const args = grokArgs({ sandbox: 'write' });
   assert.ok(args.includes('acceptEdits'));
