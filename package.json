@@ -36,12 +36,12 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node test/smoke.mjs && node test/runtime.smoke.mjs && node test/v14.smoke.mjs && node test/v15.smoke.mjs && node test/installers.smoke.mjs && node --test test/teamcode.test.js",
+    "test": "node test/smoke.mjs && node test/runtime.smoke.mjs && node test/v14.smoke.mjs && node test/v15.smoke.mjs && node test/installers.smoke.mjs && node test/v16.smoke.mjs && node test/audit.smoke.mjs && node --test test/teamcode.test.js",
     "test:core": "node test/smoke.mjs",
     "test:runtime": "node test/runtime.smoke.mjs",
     "test:v14": "node test/v14.smoke.mjs",
     "test:installers": "node test/installers.smoke.mjs",
-    "ci": "node test/smoke.mjs && node test/runtime.smoke.mjs && node test/v14.smoke.mjs && node test/v15.smoke.mjs && node test/installers.smoke.mjs && node --test test/teamcode.test.js",
+    "ci": "node test/smoke.mjs && node test/runtime.smoke.mjs && node test/v14.smoke.mjs && node test/v15.smoke.mjs && node test/installers.smoke.mjs && node test/v16.smoke.mjs && node test/audit.smoke.mjs && node --test test/teamcode.test.js",
     "eval:ab": "node eval/ab-scroll-vs-baseline/runner.mjs",
     "eval:ab:live": "node eval/ab-scroll-vs-baseline/runner.mjs --delay 350",
     "eval:ab:real": "node eval/ab-scroll-vs-baseline/real-runner.mjs --provider codex --repeats 3 --cases T01",
@@ -55,7 +55,9 @@
     "eval:ab:dashboard": "node eval/ab-scroll-vs-baseline/dashboard/server.mjs",
     "eval:ab:dashboard:export": "node eval/ab-scroll-vs-baseline/dashboard/export-static.mjs",
     "test:v15": "node test/v15.smoke.mjs",
-    "test:teamcode": "node --test test/teamcode.test.js"
+    "test:teamcode": "node --test test/teamcode.test.js",
+    "test:v16": "node test/v16.smoke.mjs",
+    "test:audit": "node test/audit.smoke.mjs"
   },
   "dependencies": {},
   "license": "MIT"

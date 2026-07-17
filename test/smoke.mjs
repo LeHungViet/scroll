@@ -67,5 +67,24 @@ t('cost estimate returns a single/multi recommendation', () => {
   assert.ok(e.single > 0 && e.multi > 0);
 });
 
+// ── Meta gate: a test file that CI never runs protects nothing ───────────────
+// A suite can sit on disk for months, pass when run by hand, and still guard
+// nothing because `npm test` never names it. That is not hypothetical: it is how
+// a provider bug reached main -- the suite covering it existed and was green, and
+// had simply never run in CI. Written by hand, this check would rot the same way,
+// so it lives inside a file the test script already names.
+t('every test file on disk is wired into `npm test` (an unrun test guards nothing)', () => {
+  const pkgPath = new URL('../package.json', import.meta.url);
+  const scripts = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).scripts || {};
+  const testDir = new URL('.', import.meta.url);
+  const onDisk = fs.readdirSync(testDir).filter((f) => /\.(test\.js|smoke\.mjs)$/.test(f));
+  assert.ok(onDisk.length > 0, 'no test files found — the glob is wrong, not the repo');
+  for (const key of ['test', 'ci']) {
+    const script = scripts[key] || '';
+    const missing = onDisk.filter((f) => !script.includes(`test/${f}`));
+    assert.deepEqual(missing, [], `scripts.${key} does not run: ${missing.join(', ')}`);
+  }
+});
+
 console.log(`\n${fail === 0 ? '\x1b[32m✔ all green\x1b[0m' : '\x1b[31m✖ failures\x1b[0m'}: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
