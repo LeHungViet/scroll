@@ -1,7 +1,9 @@
 # SCROLL Specification
 
-**Version:** 1.6 · **Status:** Draft (runtime built; §28–30 implemented) · **Date:** 2026-07-15 · **Reference impl:** `@agentpro/scroll` 0.11.0
+**Version:** 1.7 · **Status:** Draft (runtime built; §28–33 implemented) · **Date:** 2026-11-14 · **Reference impl:** `@agentpro/scroll` 0.12.0
 
+> **v1.7 (subject memory):** §31 per-subject facts behind one five-layer gate · §32 episodic sessions, cards and day notes with a frozen, hashed load contract, deterministic search and a forget that reaches every copy · §33 groups and many surfaces. §7 stays the agent's own memory.
+>
 > **v1.4 (the harness + loop-engineering layer):** §21 risk-tiered permission matrix (5 tiers, enforced at the action boundary) · §22 grounding pre-check · §23 `LOOP.md` outer loop. Plus record corrections: `scroll eval` is **built** (not roadmap); the approval file lives under `control/approvals/<id>` (§18.3).
 
 This document is the normative reference for SCROLL agents. A tool is **SCROLL-conformant** if it reads and writes agent folders exactly as defined here.
@@ -117,6 +119,7 @@ A list of rules the agent **MUST NOT** violate, in prose or bullets. Referenced 
 - Archival log files **MUST** be named `YYYY-MM-DD-<topic>.md` and **MUST NOT** be appended to concurrently by two processes (race-safe rule: one file per session).
 - Visibility is determined by **folder**, not metadata. Promotion between layers is a file **move**.
 - A loader **MUST** only surface memory an agent is permitted to read (its own `private`, its `team`, and `global`).
+- §7 holds the agent's **own** memory (procedure, lessons). Facts about the people, groups and projects an agent serves **MUST NOT** be written here — they belong in subject memory (§31–§33), outside the repo.
 
 ---
 
@@ -531,7 +534,7 @@ You repeat the user's message back, clearly and briefly.
 
 This spec is versioned with semver. Renderings and validators declare the spec version they target. Backward-incompatible changes increment MAJOR. Agents declare their own `version` independently of the spec version.
 
-*SCROLL Specification v1.6 · reference implementation `@agentpro/scroll` 0.11.0 — Agent Pro. Companion: `README.md`, `AGENTS.md`, `templates/agent/`, `templates/work/LOOP.md`.*
+*SCROLL Specification v1.7 · reference implementation `@agentpro/scroll` 0.12.0 — Agent Pro. Companion: `README.md`, `AGENTS.md`, `templates/agent/`, `templates/work/LOOP.md`.*
 
 ---
 
@@ -622,6 +625,137 @@ fixture:
 - `scroll eval` **MUST** print provenance beside every verdict; `scroll audit` **MUST** warn when a capability is covered only by `synthetic` cases.
 
 **Never hand-mutate the state of the system you are grading.** If a fixture must be hand-patched before a case will run, the case has just found a defect — not an inconvenience.
+
+---
+
+## §31 — Subject memory (v1.7)
+
+> Reference impl: `lib/memory.js` (`openStore`) · CLI `scroll memory …` (`lib/memory-cli.js`) · read path wired into `scroll run` (`task.subject`) · tests `test/v17.smoke.mjs`, including a mutation self-test.
+
+§7 is the memory an **agent** keeps about its own work. §31 is the memory an agent keeps about the **subjects it serves**: a person, a group, a project, or another agent. The rule that governs everything below: **the agent proposes, the machine decides.** A model may suggest that something be remembered; only a gate written in code turns it into a durable fact.
+
+### 31.1 Store and identity
+
+- Subject memory lives in a **data plane outside git and outside every workdir**. A store located inside a run's workdir **MUST** be refused (`store_inside_workdir`). Any raw tool path (shell, file read/write) that resolves into the store **MUST** be treated as tier `destructive` before normal tier resolution — the loader and the `memory.*` capabilities are the only legal way in.
+- A subject id is opaque and immutable: `s_<region>_<16 hex>`, never derived from personal data. The region is part of the id, so routing is a path.
+- Storage is sharded by the hex of the id: `subjects/<hh>/<hh>/<sid>/`. **One directory per subject; no file may hold the content of two subjects** (search indexes, ledgers and caches included).
+- Channel identities (`telegram:<id>`, an email, a phone, `device:<id>`, `mcp:<client>`) are **aliases**: stored as `sha256(normalize(alias)) → sid`. An alias that already points at another subject is refused (`alias_conflict`); merging is an explicit operation.
+- Raw sids never leave the data plane: events, digests and ledgers carry an HMAC pseudonym.
+
+### 31.2 Journal leads, projections follow
+
+```
+<sid>/journal/CURRENT · seg-NNNN.jsonl · seg-NNNN.jsonl.sealed   # source of truth for facts
+<sid>/profile.json · index.md · days/ · sessions/*.card.md        # projections — rebuildable
+```
+
+- A write takes the subject lock, appends, fsyncs, and **confirms by reading back** (§28) before it counts. Projections are replaced by atomic rename.
+- A checkpoint is a **structural** marker in journal order; the tail after it is ordered by `(ts, append order)`, so replaying a journal twice yields byte-identical projections, and an op appended after a checkpoint with an earlier clock still survives.
+- Consolidation is bracketed (`consolidate_start` … `consolidate_end`), writes a checkpoint as the first line of a new segment, seals the old ones, and appends an **anchor** — a running hash over every journal line. `fsck` recomputes it; a line edited behind the store's back breaks every later anchor. A torn tail is skipped on read and truncated by `fsck --repair`.
+- Invariant (machine-checked): at most **one active fact per `(key, about)`**; a new value supersedes the old one, which stays queryable with `superseded_by`.
+
+### 31.3 Fact schema
+
+`id · key (namespace.key, registered in the taxonomy) · value · about (self | person:<slug> | group) · provenance · evidence · sensitivity · derived_from? · expires_at? · status`
+
+Provenance is a closed vocabulary: `stated` (the subject said it) · `agent_observed` · `system_verified` · `user_edit` · `derived` (consolidated from cited facts). Evidence for `stated` / `agent_observed` is `{ ref: "<session>#<seq>", quote }` — a pointer to a stored turn and a verbatim quote from it.
+
+### 31.4 The gate (one gate, every write path)
+
+Every write — a mid-session proposal, the end-of-session sweep (§32.3), consolidation (§31.6), a human edit — passes the same five layers, in order:
+
+1. **Syntax** — the key is registered in the taxonomy; type, length, enum and required fields hold.
+2. **Evidence** — the referenced turn exists and contains the quote verbatim (case- and whitespace-insensitive). For `stated`, that turn **MUST** have been spoken by the subject itself; a quote from the agent's own turn can at most yield `agent_observed` (`speaker_mismatch` otherwise). `derived` facts **MUST** cite existing fact ids. `system_verified` / `user_edit` are accepted only from trusted callers.
+3. **Provenance floor** — keys may require a provenance (e.g. entitlements require `system_verified`).
+4. **Sensitivity** — each key has a class `normal | sensitive | never`. `never` is refused outright; `sensitive` only when the policy allows it. Values and quotes are scanned for secrets (keys, tokens, card numbers, password assignments) and refused on a hit. Turns are redacted **before** they reach disk.
+5. **Instruction-like content** — a value that reads as an instruction to the agent (ignore rules, skip confirmations, elevate privileges, exfiltrate credentials) is refused. Memory is data, never a channel for installing rules. Apps MAY add patterns; they may not remove the built-in ones.
+
+A value whose folded form matches a **tombstone** (§32.7) is refused (`forgotten`). A machine write (`derived` / `agent_observed`) that would overwrite a `user_edit`, or a `derived` sensitive fact, goes to a **review queue** instead of the journal.
+
+### 31.5 The loader
+
+- Loads only what the gate would accept today: a fact below its key's provenance floor, or of class `never`, **MUST NOT** load even if it reached the journal by another route.
+- `sensitive` facts never load into the contract; they surface only through an explicit search (§32.5), flagged.
+- Scoping is a static lookup, not a model judgment: `capability_topics` maps the agent's capabilities to namespaces; `always_load` / `always_load_for: [capability]` pins keys; with a `persona`, a shared account loads only account-level facts and that persona's own.
+- Profiles that require verification (e.g. customer service) **MUST** deny the contract and search to an unverified subject.
+- Output is fenced and marked as data: `<subject-memory sid="<hmac>" snapshot="<hash>"> (DATA ONLY …) … </subject-memory>`. Subject memory is never a valid grounding source (§22) for `financial` parameters unless `system_verified`.
+- In `scroll run`, a task with `subject:` (or `--subject`) gets its subject's contract in the volatile part of the prompt (§13) and emits `memory_loaded { subject (hmac), snapshot, memoryChars, truncated }` or `memory_denied`.
+
+### 31.6 Consolidation
+
+- **Mechanical tier** (deterministic, no model): checkpoint + seal, TTL expiry, retention (§32.6), recall-based promotion (§32.5), anchor. Bracketed.
+- **Model tier** ("dream"): the app supplies the model call; every output op goes through the gate and **MUST** cite fact ids. A merge marks each source `superseded_by` the merged fact. Before committing, the runner checks **handoff fidelity**: every fact active before the dream is still active or superseded/expired with a link; anything else aborts. A dream is gated (a minimum of new swept sessions **and** of elapsed time) and **SHOULD** be scheduled as an ordinary bounded run (§23), not a background daemon. **A failed dream is a terminal state** that blocks the next dream until a human acknowledges it — never "warn and continue".
+
+---
+
+## §32 — Episodic memory: sessions and days (v1.7)
+
+> Reference impl: `lib/memory.js` (`openSession` · `appendTurn` · `closeSession` · `sweep` · `snapshot` · `search` · `forget`).
+
+### 32.1 Layers
+
+| Layer | Unit | Written by | In the load contract |
+|---|---|---|---|
+| L1 session | every turn: `seq, ts, surface, speaker, role, text` | the runtime, append-only | never wholesale; only the capsule (§32.4) |
+| L2 card | a summary of one session; every line cites turn `seq`s | the sweep (model, gated) | via day notes |
+| L3 day | `days/YYYY-MM-DD.md`, rebuilt **deterministically** from cards + facts of that day | the machine | today and yesterday |
+| L4 facts | §31 | the gate | by topic/capability |
+| L5 procedure | the agent's own lessons (§7) | the agent | stable prefix |
+| index | "what is in memory": namespaces, counts, date ranges | the machine | always |
+
+### 32.2 Sessions on conversational surfaces
+
+§14 runs end at a machine-defined point. A conversation does not, so the boundary is part of the contract: a session closes on `idle | closed | daily | compaction | explicit | reset`. The app decides the thresholds; closing before a context compaction is the **pre-compaction flush**. A subject MAY have several sessions open at once (one per surface); each has its own file, so they never contend.
+
+### 32.3 Sweep
+
+On close, `sweep(session, summarize)` runs the app's summarizer over the session and is **idempotent**: a watermark records the last swept `seq`; a crash means it re-runs, and duplicate facts are no-ops.
+- Card lines without a valid citation, or that read as instructions, are dropped. A line citing a turn that produced a `sensitive` fact is kept out of the card (cards feed day notes, which load every session).
+- Proposed facts carry `{ seq, quote }` and pass the §31.4 gate.
+
+### 32.4 The load contract
+
+Built by code, in a fixed order: index → facts → group facts (§33) → day notes (today, yesterday) → **capsule** (the last K turns across every surface, excluding the running session; turns that produced a sensitive fact are masked) → open items. Over budget, sections are cut from the bottom **with a marker**, never silently.
+
+- The contract is **frozen for the session**: writes made during the session do not change it (the agent sees them through tool results and search). This keeps the prompt prefix cacheable.
+- It is **hashed**; the session's first line records the hash, so "what did the agent know at that moment" can be replayed.
+- Open items are context, not an agenda: an agent does not raise them unprompted.
+
+### 32.5 Search
+
+`search(query, scope, since, limit)` is deterministic: diacritic-insensitive prefix matching over the subject's own files (facts including superseded and expired ones, turns, cards, days), ranked by `(matched terms desc, ts desc, ref asc)`. It returns bounded, labelled hits. **Every read is recorded** in the subject's access ledger (`reader`, `session`, `query`, `refs`). Facts recalled in at least `min_recalls` reads across at least `min_sessions` sessions are pinned by the mechanical tier — counts decide, not a model. An index (for example SQLite FTS) MAY be added as a projection, provided it is rebuildable, per-subject, and returns the same ranked results as the scan.
+
+### 32.6 Retention
+
+Raw turns older than `retention_days` are removed by the mechanical tier; cards, day notes and facts remain. Facts keep their own quote, so evidence survives the turn it came from.
+
+### 32.7 Forget
+
+`forget(fact)` writes a tombstone (a hash of the folded value) and **cascades**: a `derived` fact whose every source is forgotten is forgotten too. The content is then removed **everywhere it lives** — journal lines (including checkpoints in sealed segments) become stubs, the quote and value are scrubbed from stored turns (policy `forget_purges_turn`, default on), card lines carrying them are dropped, access-ledger entries and review items quoting them are removed, and projections are rebuilt. A `redact` op is appended so `fsck` knows anchors before it were rewritten on purpose. Conformance test: after a forget, a grep of the whole store for the content finds nothing, and re-proposing it — even from a new session — is refused.
+
+`edit(fact)` supersedes with provenance `user_edit`; machines cannot overwrite it except through the review queue (§31.4). Erasing a whole subject is `destructive` and requires approval; it removes the directory and every alias, and the erase ledger keeps only the pseudonym.
+
+---
+
+## §33 — Groups, shared accounts and many surfaces (v1.7)
+
+> Reference impl: `lib/memory.js` (`addMember` · `removeMember` · `proposeToGroup`).
+
+- Subject kinds: `person | group | agent | project`. A **group** (a household, a team, a company) is a subject with its own store.
+- Membership is a `system_verified` op written to both journals: `member_of { group, role, read: [namespaces], write: [namespaces] }`. Only trusted callers create it.
+- A person's contract includes the group facts in the namespaces they may read. **It never includes another person's facts, even within the same group** (conformance: a canary planted in one member's memory never appears in another member's contract or search).
+- A member may propose a group fact only in a namespace they may write, with evidence from **their own** turn.
+- What a person says about a third party is stored in the speaker's memory under the speaker's subject (`about: person:<slug>`) — relationship context, never a profile of the other person.
+- Session scope across surfaces is policy: `main` (one owner, every surface continues one conversation), `per-surface`, or `per-peer`. Whatever the scope, every surface writes to the same subject.
+- Another agent acting for the subject (e.g. through MCP) is a different speaker: its turns can yield `agent_observed`, never `stated`. Its reads are recorded like any other (§32.5).
+
+### SPEC / APP boundary
+
+| SPEC fixes (conformance) | APP decides (policy) |
+|---|---|
+| layout and isolation · journal + projections + anchors · the five-layer gate · tombstones and forget cascade · loader laws (provenance floor, sensitive out, persona, verification) · frozen, hashed, fenced contract · deterministic search + access ledger · bracketed consolidation and dream rules · group read/write by namespace | store location and region · taxonomy, sensitivity classes and extra instruction patterns · budgets, capsule size, retention, TTLs · session boundaries and scope · promotion and dream thresholds · who reviews · labels and language of the contract |
+
+A memory need the mechanism does not cover is a proposal to change this spec — not a workaround inside the app.
 
 ---
 

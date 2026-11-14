@@ -30,6 +30,7 @@ agents/<name>/
 8. **Order context for caching:** stable content first (tools, hard-rules, IDENTITY, SOUL), volatile content last (current task, fresh blackboard). Never interleave.
 9. **Declare risk as data, never prose (v1.4).** A tool's risk tier goes in `.mcp.json` (per tool) or `IDENTITY.security.risk_defaults` (per capability) — never as a sentence in a markdown body, where a model can be talked out of it. Tiers: `read_only · reversible_write · external_comm · financial · destructive`. `financial`/`destructive` actions are gated and **grounding-checked**: list the parameters to ground (`ground: [...]`) so a fabricated id/amount can't execute.
 10. **For self-directed or scheduled work, write a `LOOP.md` (the outer loop).** It MUST declare at least one `stop_conditions` (a loop that can't stop is unsafe). The inner loop is `scroll run`; the outer loop is `scroll loop`. Never hand-roll a `while(true)` — it bypasses the caps, gates, and digest.
+11. **Memory about people is data the machine admits, not notes the model writes (v1.7).** Facts about the people, groups or projects an agent serves go through `lib/memory.js` (§31–33) — never into `agents/<name>/memory/`, never into the repo. Don't hand-roll a "user notes" file, a vector store, or a prompt that tells the model what to remember: propose facts with a quote and a turn reference and let the gate decide. Keep the store outside every workdir.
 
 ## Before you say you're done
 Run, in order — and do not merely *claim* you ran them; the human/CI re-runs `scroll audit --verify`:

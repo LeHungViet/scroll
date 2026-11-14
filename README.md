@@ -43,9 +43,11 @@ The thesis in one line: **SCROLL doesn't try to make the model smarter — it ma
 
 ---
 
-## Implementation status (2026-07-15 · v1.6)
+## Implementation status (2026-11-14 · v1.7)
 
-**Built & tested** (`test/` — **73 checks green**: 9 core + 14 runtime + 16 v1.4 + 6 v1.5 + 10 v1.6 + 11 installers + 7 audit):
+**Built & tested** (`test/` — **114 checks green**: 10 core + 14 runtime + 16 v1.4 + 6 v1.5 + 10 v1.6 + 33 v1.7 + 11 installers + 7 audit + 7 team-code):
+
+- **§31–33 Subject memory** — one memory per person, group, project or agent, shared by every surface that talks to it (voice, chat, messaging, other agents). **The agent proposes; the machine decides**: a fact is accepted only with a verbatim quote from a stored turn **of the person it is about**, through one five-layer gate (taxonomy · evidence · provenance floor · sensitivity + secret scan · instruction-like content). Sessions and day notes give the agent continuity across surfaces; the load contract is built by code, frozen for the session and hashed (cacheable, replayable). Search is deterministic and every read is logged. **Forget reaches every copy** — journal, checkpoints, stored turns, cards, ledgers — and a tombstone stops it from being learned again. Groups share facts by namespace; one member never sees another's. Zero dependencies, no vector DB, files only; the test suite plants six bugs in the memory code and fails unless each is caught.
 
 - **§28 Effect confirmation** — a write is not "done" because the call returned a non-error. `lib/effects.js` re-reads the state with a **separate** probe and checks a declared predicate; a mismatch emits `effect_unconfirmed` and fails the step. `financial`/`destructive` writes with no `confirm` are blocked (fail-closed) and flagged by `scroll audit`. Corollary: an unknown input field is rejected, never dropped — silently dropping input is how a system reports success for work it never did.
 - **§29 Ungraded is not pass** — `verdict` is ternary (`pass | fail | ungraded`). "No check ran" is counted separately and never folded into `ok`; a judge that could not run says nothing, so it grades `ungraded` rather than `fail`.
@@ -189,8 +191,9 @@ SCROLL doesn't rely on you reading the docs — the correct path is the only one
 | `scroll mcp add <name>` | Wire an MCP server / connector into `.mcp.json` (`${vault:KEY}` creds · per-tool risk) | ✅ built |
 | `scroll skill add <ref>` | Install / scaffold a `SKILL.md` skill (`--agent` to attach) | ✅ built |
 | `scroll plugin add <ref>` | Unpack an agent-pack bundle (agents + skills + merged `.mcp.json`) | ✅ built |
+| `scroll memory <cmd>` | Subject memory: `new · link · show · snapshot · search · forget · review · member · consolidate · fsck · erase` | ✅ built |
 
-Useful `run` flags: `--resume` (crash-resume), `--worktree` (git-worktree isolation), `--risk <tier>`, `--auto-approve`, `--language <code>`, `--max-usd` / `--max-iterations`.
+Useful `run` flags: `--subject <sid|alias> --memory-store <dir>` (load that subject's memory contract), `--resume` (crash-resume), `--worktree` (git-worktree isolation), `--risk <tier>`, `--auto-approve`, `--language <code>`, `--max-usd` / `--max-iterations`.
 
 ---
 
