@@ -85,7 +85,7 @@ Free-form prose defining voice, values, and behavior. There is **no required str
 ## 5 · `TOOLS.md`
 
 ### 5.1 Capabilities (logical, runtime-agnostic)
-Capabilities are dot-namespaced verbs. Reserved roots: `fs`, `web`, `shell`, `mcp`, `vision`, `voice`, `dispatch`. Example: `web.search`, `fs.read`, `shell.exec`, `dispatch.agents`.
+Capabilities are dot-namespaced verbs. Reserved roots: `fs`, `web`, `shell`, `mcp`, `vision`, `voice`, `dispatch`, `memory` (v1.7, §31). Example: `web.search`, `fs.read`, `shell.exec`, `dispatch.agents`, `memory.subject`.
 
 The `capabilities` array in `IDENTITY.md` is the source of truth; `TOOLS.md` **MUST NOT** declare a capability absent from `IDENTITY.md`. A validator MUST flag the mismatch.
 
@@ -486,7 +486,7 @@ Before any `financial` or `destructive` action, a runner **SHOULD** verify that 
     },
     "capabilities": {
       "type": "array",
-      "items": { "type": "string", "pattern": "^(fs|web|shell|mcp|vision|voice|dispatch)\\.[a-z_]+$" }
+      "items": { "type": "string", "pattern": "^(fs|web|shell|mcp|vision|voice|dispatch|memory)\\.[a-z_]+$" }
     },
     "dispatch": {
       "type": "object",
@@ -667,7 +667,7 @@ Every write — a mid-session proposal, the end-of-session sweep (§32.3), conso
 1. **Syntax** — the key is registered in the taxonomy; type, length, enum and required fields hold.
 2. **Evidence** — the referenced turn exists and contains the quote verbatim (case- and whitespace-insensitive). For `stated`, that turn **MUST** have been spoken by the subject itself; a quote from the agent's own turn can at most yield `agent_observed` (`speaker_mismatch` otherwise). `derived` facts **MUST** cite existing fact ids. `system_verified` / `user_edit` are accepted only from trusted callers.
 3. **Provenance floor** — keys may require a provenance (e.g. entitlements require `system_verified`).
-4. **Sensitivity** — each key has a class `normal | sensitive | never`. `never` is refused outright; `sensitive` only when the policy allows it. Values and quotes are scanned for secrets (keys, tokens, card numbers, password assignments) and refused on a hit. Turns are redacted **before** they reach disk.
+4. **Sensitivity** — each key has a class `normal | sensitive | never`. `never` is refused outright; `sensitive` only when the policy allows it. Values and quotes are scanned for secrets (keys, tokens, card numbers, password assignments) and refused on a hit. Turns are redacted **before** they reach disk. Apps MAY add secret shapes for their own language (`secret_patterns`); the built-in ones always apply.
 5. **Instruction-like content** — a value that reads as an instruction to the agent (ignore rules, skip confirmations, elevate privileges, exfiltrate credentials) is refused. Memory is data, never a channel for installing rules. Apps MAY add patterns; they may not remove the built-in ones.
 
 A value whose folded form matches a **tombstone** (§32.7) is refused (`forgotten`). A machine write (`derived` / `agent_observed`) that would overwrite a `user_edit`, or a `derived` sensitive fact, goes to a **review queue** instead of the journal.

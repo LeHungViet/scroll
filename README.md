@@ -45,7 +45,7 @@ The thesis in one line: **SCROLL doesn't try to make the model smarter — it ma
 
 ## Implementation status (2026-11-14 · v1.7)
 
-**Built & tested** (`test/` — **114 checks green**: 10 core + 14 runtime + 16 v1.4 + 6 v1.5 + 10 v1.6 + 33 v1.7 + 11 installers + 7 audit + 7 team-code):
+**Built & tested** (`test/` — **117 checks green**: 10 core + 14 runtime + 16 v1.4 + 6 v1.5 + 10 v1.6 + 36 v1.7 + 11 installers + 7 audit + 7 team-code):
 
 - **§31–33 Subject memory** — one memory per person, group, project or agent, shared by every surface that talks to it (voice, chat, messaging, other agents). **The agent proposes; the machine decides**: a fact is accepted only with a verbatim quote from a stored turn **of the person it is about**, through one five-layer gate (taxonomy · evidence · provenance floor · sensitivity + secret scan · instruction-like content). Sessions and day notes give the agent continuity across surfaces; the load contract is built by code, frozen for the session and hashed (cacheable, replayable). Search is deterministic and every read is logged. **Forget reaches every copy** — journal, checkpoints, stored turns, cards, ledgers — and a tombstone stops it from being learned again. Groups share facts by namespace; one member never sees another's. Zero dependencies, no vector DB, files only; the test suite plants six bugs in the memory code and fails unless each is caught.
 

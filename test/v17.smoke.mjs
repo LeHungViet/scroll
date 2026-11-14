@@ -106,6 +106,17 @@ await t('§32 L1: monotonic seq per session, secrets redacted before disk, close
   assert.throws(() => m.appendTurn(a, s, { text: 'late' }), /closed/);
 });
 
+await t('§32.2 import: a backdated session lands on its own day and keeps its turn times', () => {
+  const m = mk(); const a = m.createSubject();
+  const s = m.openSession(a, { surface: 'mac-voice', at: '2026-10-01T03:00:00.000Z' });
+  assert.ok(s.startsWith('20261001T100000-mac-voice-'), s);
+  m.appendTurn(a, s, { text: 'old line', ts: '2026-10-01T03:00:05.000Z' });
+  m.closeSession(a, s, { reason: 'idle', at: '2026-10-01T03:30:00.000Z' });
+  const lines = m.readSession(a, s);
+  assert.equal(lines[0].imported, true); assert.equal(lines[1].ts, '2026-10-01T03:00:05.000Z'); assert.equal(lines[2].ts, '2026-10-01T03:30:00.000Z');
+  assert.throws(() => m.openSession(a, { at: 'yesterday' }), /bad session time/);
+});
+
 // ── the gate ───────────────────────────────────────────────────────────────────────────────
 await t('gate L1-L2: unregistered key, missing turn, paraphrased quote → rejected', () => {
   const m = mk(); const a = m.createSubject(); const s = m.openSession(a);
@@ -144,6 +155,16 @@ await t('gate L4: never-store classes, secrets, sensitive allowed only when poli
   const strict = mk({ allow_sensitive: false }); const b = strict.createSubject(); const sb = strict.openSession(b);
   const rb = say(strict, b, sb, TOM);
   assert.equal(strict.remember(b, { key: 'health.allergy', value: 'shrimp', ref: rb, quote: 'd\u1ecb \u1ee9ng t\u00f4m' }).reason, 'sensitive_not_allowed');
+});
+await t('gate L4: an app adds secret shapes of its own language; they are redacted from turns and refused as values', () => {
+  const m = mk({ secret_patterns: ['(contrase\\u00f1a|clave)\\s*(es|:)\\s*\\S+'] }); const a = m.createSubject(); const s = m.openSession(a);
+  const r = say(m, a, s, 'la clave es Tigre99 para el wifi');
+  assert.ok(!m.readSession(a, s).find((l) => l.seq === 1).text.includes('Tigre99'));
+  assert.deepEqual(grepStore(m.root, 'Tigre99'), []);
+  const r2 = say(m, a, s, 'el router esta en la sala');
+  const f = m.remember(a, { key: 'device.router', value: 'en la sala', ref: r2, quote: 'router esta en la sala' });
+  assert.equal(m.edit(a, f.id, 'clave: Tigre99').reason, 'secret_detected');
+  void r;
 });
 await t('gate L5: memory is not a channel to install rules (built-in + app patterns)', () => {
   const m = mk({ instruction_patterns: ['(kh\u00f4ng c\u1ea7n|\u0111\u1eebng)\\s+h\u1ecfi\\s+x\u00e1c nh\u1eadn'] });
@@ -518,6 +539,17 @@ await t('CLI: scroll memory new/link/show/search/forget/erase go through the sam
   assert.equal(denied.status, 1); assert.ok(denied.stdout.includes('approval required'));
   assert.equal(run('erase', 'telegram:9', '--approve').status, 0);
   assert.equal(run('resolve', 'telegram:9').status, 1);
+});
+
+await t('§5.1 memory.* is a reserved capability root (an agent may declare memory.subject without a warning)', async () => {
+  const { scaffold, checkAgent } = await import('../lib/scroll.js');
+  const repo = tmp(); scaffold('helper', repo);
+  const idp = path.join(repo, 'agents', 'helper', 'IDENTITY.md');
+  fs.writeFileSync(idp, fs.readFileSync(idp, 'utf8').replace(/^capabilities:\n/m, 'capabilities:\n  - memory.subject\n'));
+  const c = checkAgent('helper', repo);
+  assert.ok(fs.readFileSync(idp, 'utf8').includes('memory.subject'));
+  assert.ok(!c.warnings.some((w) => w.includes('memory.subject')), JSON.stringify(c.warnings));
+  assert.ok(fs.existsSync(path.join(repo, 'agents', 'helper', 'memory', 'lessons.md')), 'the scaffold ships memory/ (§7)');
 });
 
 // ── mutation self-test: every planted bug must turn a check red ──────────────────────────
