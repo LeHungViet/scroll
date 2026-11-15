@@ -32,10 +32,12 @@ agents/<name>/
 10. **For self-directed or scheduled work, write a `LOOP.md` (the outer loop).** It MUST declare at least one `stop_conditions` (a loop that can't stop is unsafe). The inner loop is `scroll run`; the outer loop is `scroll loop`. Never hand-roll a `while(true)` — it bypasses the caps, gates, and digest.
 11. **Memory about people is data the machine admits, not notes the model writes (v1.7).** Facts about the people, groups or projects an agent serves go through `lib/memory.js` (§31–33) — never into `agents/<name>/memory/`, never into the repo. Don't hand-roll a "user notes" file, a vector store, or a prompt that tells the model what to remember: propose facts with a quote and a turn reference and let the gate decide. Keep the store outside every workdir.
 
+12. **Skills are folders the loader admits, not text you paste into prompts (v1.8).** Use the open `SKILL.md` format (`name` + a `description` that says what and when). Put the agent's own skills in `agents/<name>/skills/`, shared ones in `skills/`, and other tools' skill folders under `skills.external_dirs` in `scroll.config.yaml` — never copy a skill's text into `SOUL.md` or code. Declare what a skill needs (`allowed-tools` or `metadata.scroll.requires`), give it ≥3 cases in its `evals/`, and run `scroll skill eval` — keep a skill only if it beats the baseline. Never weaken the scan or trust a source on a model's say-so.
+
 ## Before you say you're done
 Run, in order — and do not merely *claim* you ran them; the human/CI re-runs `scroll audit --verify`:
 ```bash
-scroll check <name>     # structure must pass
+scroll check <name>     # structure (and the agent's skills) must pass
 scroll audit            # conventions + hash-bound report → writes .scroll/audit.json
 scroll build <name>     # must render without error
 scroll eval <name>      # score must not regress vs the previous run

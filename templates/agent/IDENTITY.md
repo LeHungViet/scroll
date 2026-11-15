@@ -18,6 +18,8 @@ model:
 capabilities:
   - web.search
   - fs.read
+  # - skills.read                     # v1.8: index of skills + skill_list / skill_view (§34)
+# skills: [house-style]               # v1.8: pin skills to the top of the index (§34.6)
 
 # Dispatch authority (only relevant for controller agents):
 dispatch:

@@ -1,7 +1,9 @@
 # SCROLL Specification
 
-**Version:** 1.7 · **Status:** Draft (runtime built; §28–33 implemented) · **Date:** 2026-11-14 · **Reference impl:** `@agentpro/scroll` 0.12.0
+**Version:** 1.8 · **Status:** Draft (runtime built; §28–36 implemented) · **Date:** 2026-11-15 · **Reference impl:** `@agentpro/scroll` 0.13.0
 
+> **v1.8 (skills):** §34 a skill loader — the open Agent Skills format, ordered sources including read-only folders of other tools, a byte-stable index, `skill_list` / `skill_view` · §35 one skill, many runtimes: foreign tool names map to capabilities, and a skill built around tools the agent lacks is hidden · §36 skills are validated, scanned for secrets, exfiltration, remote code and injection before any model sees them, and evaluated with and without the skill on every model they run on. §19.3 now points here; `triggers` is no longer required.
+>
 > **v1.7 (subject memory):** §31 per-subject facts behind one five-layer gate · §32 episodic sessions, cards and day notes with a frozen, hashed load contract, deterministic search and a forget that reaches every copy · §33 groups and many surfaces. §7 stays the agent's own memory.
 >
 > **v1.4 (the harness + loop-engineering layer):** §21 risk-tiered permission matrix (5 tiers, enforced at the action boundary) · §22 grounding pre-check · §23 `LOOP.md` outer loop. Plus record corrections: `scroll eval` is **built** (not roadmap); the approval file lives under `control/approvals/<id>` (§18.3).
@@ -65,6 +67,8 @@ agents/<name>/
 | `hard_rules` | OPTIONAL | path | relative path to a rules file (§6) |
 | `memory` | OPTIONAL | object | overrides default memory layout (§7) |
 | `a2a` | OPTIONAL | object | A2A Agent Card export hints (§15) |
+| `skills` | OPTIONAL | string[] | skills pinned to the top of this agent's index (§34.6) |
+| `skills_external` | OPTIONAL | boolean | `false` keeps external skill folders away from this agent (§34.2) |
 
 - `dispatch.authority` **MUST** be one of `none | low | medium | high`. Default `none`.
 - Fields not listed here are **OPTIONAL extensions**; a conformant validator MUST treat unknown fields as a **warning**, never an error.
@@ -85,7 +89,7 @@ Free-form prose defining voice, values, and behavior. There is **no required str
 ## 5 · `TOOLS.md`
 
 ### 5.1 Capabilities (logical, runtime-agnostic)
-Capabilities are dot-namespaced verbs. Reserved roots: `fs`, `web`, `shell`, `mcp`, `vision`, `voice`, `dispatch`, `memory` (v1.7, §31). Example: `web.search`, `fs.read`, `shell.exec`, `dispatch.agents`, `memory.subject`.
+Capabilities are dot-namespaced verbs. Reserved roots: `fs`, `web`, `shell`, `mcp`, `vision`, `voice`, `dispatch`, `memory` (v1.7, §31), `skills`, `ask`, `message`, `tasks` (v1.8, §35). Example: `web.search`, `fs.read`, `shell.exec`, `dispatch.agents`, `memory.subject`.
 
 The `capabilities` array in `IDENTITY.md` is the source of truth; `TOOLS.md` **MUST NOT** declare a capability absent from `IDENTITY.md`. A validator MUST flag the mismatch.
 
@@ -230,7 +234,7 @@ A loader **MUST** assemble an agent's context in two regions, in this order:
 
 - The stable prefix **MUST** be byte-identical across ticks of the same agent so provider prompt-caching hits. Tools **MUST NOT** interleave volatile content into the prefix.
 - Where a provider's default cache lifetime is short, loaders **MUST** set an explicit cache TTL; cached reads are typically billed at a small fraction of fresh input. Consult the provider's caching documentation — this spec fixes no vendor's numbers.
-- Skills are referenced by **index** (name + one-line description) in the prefix; full skill bodies load **on demand** (progressive disclosure). Skill *content* is out of scope for this spec — SCROLL specifies only the cheap-load mechanism.
+- Skills are referenced by **index** (name + one-line description) in the prefix; full skill bodies load **on demand** (progressive disclosure). §34 specifies the loader, the index and the read tools; skill *content* is out of scope.
 
 ---
 
@@ -330,9 +334,8 @@ SCROLL specifies how capabilities **attach** to an agent; it does not ship their
 A connector (Gmail, Slack, Notion, …) is an MCP server plus credentials. Credentials **MUST** be referenced via `${vault:KEY}` and resolved at load time; they **MUST NOT** appear in any agent file. A conformant tool **SHOULD** integrate an MCP/connector registry for discovery (`scroll mcp add`).
 
 ### 19.3 Skills
-- A skill is a directory containing **`SKILL.md`** with frontmatter `name`, `description`, and `triggers`, plus a body.
-- An agent references skills by name (`skills: [...]`). A loader **MUST** resolve them along a search path: `agents/<name>/skills/` → repo `skills/` → a shared library.
-- Skills **MUST** be loaded with progressive disclosure: the index (name + description) sits in the cached prefix (§13); the body loads on trigger. Skill *content* is out of scope for this spec.
+- A skill is a directory containing **`SKILL.md`** in the open Agent Skills format: frontmatter `name` and `description` (REQUIRED), `license`, `compatibility`, `metadata`, `allowed-tools` (OPTIONAL), then a markdown body; optional `scripts/`, `references/`, `assets/`. (v1.8: `triggers` is no longer required; the description says when to use the skill. A legacy `triggers` field is ignored.)
+- Loading, precedence, the index, the read tools, compatibility and checks are specified in **§34–§36**.
 
 ### 19.4 Plugins
 A plugin is a bundle (an "agent pack") containing one or more agents, a `skills/` directory, a `.mcp.json`, and a manifest. `scroll plugin add` unpacks it into `agents/` + `skills/` and merges MCP config. Plugin bundles **SHOULD** be compatible with the `.plugin` ZIP format used by Cowork/Claude.
@@ -486,7 +489,7 @@ Before any `financial` or `destructive` action, a runner **SHOULD** verify that 
     },
     "capabilities": {
       "type": "array",
-      "items": { "type": "string", "pattern": "^(fs|web|shell|mcp|vision|voice|dispatch|memory)\\.[a-z_]+$" }
+      "items": { "type": "string", "pattern": "^(fs|web|shell|mcp|vision|voice|dispatch|memory|skills|ask|message|tasks)\\.[a-z_]+$" }
     },
     "dispatch": {
       "type": "object",
@@ -534,7 +537,7 @@ You repeat the user's message back, clearly and briefly.
 
 This spec is versioned with semver. Renderings and validators declare the spec version they target. Backward-incompatible changes increment MAJOR. Agents declare their own `version` independently of the spec version.
 
-*SCROLL Specification v1.7 · reference implementation `@agentpro/scroll` 0.12.0 — Agent Pro. Companion: `README.md`, `AGENTS.md`, `templates/agent/`, `templates/work/LOOP.md`.*
+*SCROLL Specification v1.8 · reference implementation `@agentpro/scroll` 0.13.0 — Agent Pro. Companion: `README.md`, `AGENTS.md`, `templates/agent/`, `templates/work/LOOP.md`.*
 
 ---
 
@@ -756,6 +759,125 @@ Raw turns older than `retention_days` are removed by the mechanical tier; cards,
 | layout and isolation · journal + projections + anchors · the five-layer gate · tombstones and forget cascade · loader laws (provenance floor, sensitive out, persona, verification) · frozen, hashed, fenced contract · deterministic search + access ledger · bracketed consolidation and dream rules · group read/write by namespace | store location and region · taxonomy, sensitivity classes and extra instruction patterns · budgets, capsule size, retention, TTLs · session boundaries and scope · promotion and dream thresholds · who reviews · labels and language of the contract |
 
 A memory need the mechanism does not cover is a proposal to change this spec — not a workaround inside the app.
+
+---
+
+## §34 — Loading skills (v1.8)
+
+> Reference impl: `lib/skills.js` (`openSkills` · `resolveSources` · `findSkillDirs` · `registerSourceLayout`). CLI: `scroll skill list | view | index | sources`.
+
+Skills written for one agent runtime are folders in an open format, so an agent built on SCROLL can use them as they are. The loader decides, in code, which skills an agent may see; the model only ever sees what passed.
+
+### 34.1 Format
+A skill is a folder holding `SKILL.md` in the open Agent Skills format (§19.3). `name` is 1–64 characters of lowercase letters, digits and single hyphens; `description` is at most 1024 characters and says what the skill does and when to use it. SCROLL-specific fields live under `metadata.scroll`: `requires`, `fallback_for`, `platforms` (§34.5). Fields other runtimes define (for example `metadata.hermes.requires_tools`, `disable-model-invocation`) **SHOULD** be honored when their meaning is clear. A loader **MUST** read block scalars, quoted strings and wrapped lines in the frontmatter; a description must never be lost to a YAML subset.
+
+### 34.2 Sources and precedence
+Sources are read in this order; for a given name the first source wins and the others are reported as shadowed:
+
+1. `agents/<name>/skills/` (trust `trusted`)
+2. repo `skills/` (trust `trusted`)
+3. `skills.external_dirs` in `scroll.config.*`, in the order listed, then `SCROLL_SKILLS_DIRS` (path-delimited). Each entry is a path or `{ path, trust, layout, max_depth }`; `~` and `${VAR}` expand. Default trust: `community`.
+
+- External sources are **read-only**: a loader **MUST NOT** write to them.
+- Inside one source, when several folders declare the same name (a plugin cache keeping old versions), the copy with the newest `SKILL.md` wins.
+- A `layout` says how to find skill folders in a source. `dir` (default): every directory holding a `SKILL.md`, at any depth up to `max_depth` (default 6), following directory symlinks once. `claude-code-plugins`: only the plugin versions its `installed_plugins.json` lists as installed. Layouts are extensible.
+- An agent with `skills_external: false` sees only sources 1–2.
+- Nothing outside the configured sources is read. A tool **MAY** report well-known skill folders of other tools that exist on the machine (`scroll skill sources --detect`), but adding one is the operator's decision.
+
+### 34.3 The index
+- The index is one block in the stable prefix (§13), after hard-rules:
+  ```
+  <available_skills>
+  <one fixed line telling the model to read a skill with skill_view before using it>
+  - <name>: <description>
+  </available_skills>
+  ```
+- It **MUST** be a deterministic function of the visible skill set, the pinned list and the limits: lines sorted by name, whitespace collapsed, angle brackets removed (a description cannot close the block). Two builds over the same set **MUST** be byte-identical.
+- The index is **frozen** when a session or run opens it. Skills added, removed or changed later are announced in the volatile suffix on the next turn (`refresh` returns the notice); the prefix is rebuilt only when asked.
+
+### 34.4 Read tools
+Two tools, gated by the capability `skills.read`. Their names are data (default `skill_list`, `skill_view`).
+- `skill_list(query?, limit?, offset?)` — name and short description of visible skills; with a query, a deterministic search over name and description, folded for diacritics.
+- `skill_view(name, path?)` — without `path`: the `SKILL.md` body, preceded by the tool-name map for this runtime (§35.2) and the list of files in the skill. With `path`: one text file inside the skill folder.
+- `skill_view` **MUST** refuse absolute paths, `..`, any path whose real location (after symlinks) is outside the skill folder, binary files and files above the size cap.
+- Before serving, the loader **MUST** compare the skill's files with what it scanned. A changed skill is validated, scanned and gated again; one that no longer passes is refused for the rest of the session.
+- Every view is an event (`skill_viewed`, `skill_denied`) with the skill's content hash.
+
+### 34.5 Visibility
+A skill reaches the index and the tools only if all of these hold:
+- it is valid (§36.1) and passed the security scan (§36.2);
+- `disable-model-invocation` is not `true` (a skill meant to be started by a person only);
+- the current platform is in `platforms`, when declared (`macos | linux | windows`);
+- none of its `fallback_for` tools or capabilities is available (a fallback appears only when the primary tool is missing);
+- its compatibility status is not `hidden` (§35), unless the operator overrides it.
+
+### 34.6 Caps
+The index holds at most `skills.max_index` skills (default 150) and `skills.max_index_tokens` tokens (default 6000). Descriptions are shortened first; then skills are dropped lowest-ranked first. Rank: pinned (`IDENTITY.skills`, in order) → usage counts supplied by the application → source order → name. A skill left out of the index stays reachable through `skill_list`.
+
+### 34.7 Steps that name skills
+A `WORK.md` task (or `scroll run --skill a,b`) MAY list `skills: [...]`. The runner loads each in full into that step's volatile suffix. If any of them is not visible, the step **MUST NOT** run: it is blocked (`gate_blocked`, reason `skill`) and no model is called.
+
+---
+
+## §35 — One skill, many runtimes (v1.8)
+
+> Reference impl: `lib/skills.js` (`TOOL_ALIASES` · `skillRequirements` · `compatStatus` · `writeCompatFile`). CLI: `scroll skill scan`.
+
+### 35.1 What a skill needs
+A loader derives a skill's requirements from:
+- **declared** (hard): `allowed-tools`, `metadata.scroll.requires`, `metadata.hermes.requires_tools`, operator overrides;
+- **named in the text** (soft): MCP tool names (`mcp__server__tool`, `Server:tool`) and known tool names of other runtimes. Ordinary words (`Read`, `Task`, `patch`) count only as `` `Name` `` or "Name tool".
+
+Foreign tool names map to SCROLL capabilities through a table that is **data** (`TOOL_ALIASES`, extended by `skills.tool_aliases` in config). A name with no portable equivalent maps to nothing and is satisfied only by a tool of exactly that name. A missing planning tool (`tasks.track`) never counts against a skill.
+
+### 35.2 Status
+Against what the agent has (capabilities, tool names, MCP servers):
+- `ok` — everything is available.
+- `partial` — some tools named in the text are missing; the skill is shown, and `skill_view` says which ones are not available here.
+- `hidden` — a declared requirement is missing, or most of the tools its text names are missing (at least two, and more missing than present): a skill built around another runtime's tools.
+
+`skill_view` prepends a map from the names the skill uses to this runtime's tools (from `TOOLS.md` bindings, §5.2), e.g. `AskUserQuestion → ask_owner`. The skill's own text is never rewritten.
+
+### 35.3 The sidecar
+`scroll skill scan` writes `skills-compat.json` (per agent: `agents/<name>/skills-compat.json`): per skill its source, trust, content hash, state, status and missing tools. The operator corrects the machine under `overrides`: `{ "<skill>": { "status": "ok" | "hidden", "map": { "<ForeignTool>": "<local tool>" }, "requires": [...] } }`. Overrides survive every rescan. An override can show or hide a skill; it can never admit a skill the security scan blocked.
+
+---
+
+## §36 — Checking and grading skills (v1.8)
+
+> Reference impl: `lib/skills.js` (`validateSkill` · `scanSkillDir` · `SECURITY_RULES` · `checkSkills`), `lib/skill-eval.js` (`runSkillEval`). CLI: `scroll skill check | eval`; `scroll check` and `scroll audit` include skills.
+
+### 36.1 Validation
+`name` and `description` present and well-formed; `description` and `compatibility` within limits; files the body links to exist and stay inside the folder; the body under 500 lines (warning); references one level deep (warning). For skills the repo ships (sources 1–2) a broken SHOULD is an **error** and fails `scroll check`; for external skills it is a warning, and only a skill that cannot be addressed (no name, no description, a name outside the pattern) is kept out.
+
+### 36.2 Security scan
+Every text file in a skill (up to a file and size cap) is scanned line by line. Rules are data; each has a severity:
+
+| rule | severity |
+|---|---|
+| a live credential (`secret`); exfiltration of credentials or private files; a reverse shell; bidirectional control characters | critical |
+| zero-width hidden text; instructions to drop earlier instructions or hide actions from the user; deleting a home or root folder; erasing a disk; downloading and running code unseen; writing to shell start-up files or `authorized_keys` | high |
+| installing scheduled jobs; `sudo`; force-pushing | medium |
+
+- A phrase quoted as an example (`"ignore previous instructions" — do not obey it`) is reported at medium.
+- Whether a finding **blocks** depends on the source's trust: `builtin` and `trusted` block at critical, `community` at high, `untrusted` at medium. Lower findings are reported.
+- A blocked skill **MUST NOT** reach the index, `skill_view`, a step, an install (`scroll skill add`, `scroll plugin add`) or an eval. There is no flag that forces it in; changing a source's trust is an edit to configuration, made by a person.
+- Findings name the rule, file and line, never the matched text.
+- `scroll audit` binds its record to the content of the agent's and the repo's skills: editing one after the audit fails `audit --verify`.
+
+### 36.3 Evaluation
+Cases travel with the skill: `evals/*.md` (gold cases, §8) or `evals/evals.json` (`{ "evals": [{ "id", "prompt", "expected_output", "expectations", "files", "checks" }] }`).
+- Each case runs on each named model **with** the skill and **without** it (the baseline), `runs` times each. Machine checks grade both sides.
+- An optional judge compares the two final answers **blind**: it never sees the skill, and the order of the answers alternates case by case.
+- Verdicts are ternary (§29). A case with no machine check and no judge result is `ungraded`.
+- The record (`.scroll/skill-eval/<name>.json`, bound to the skill's content hash) states a recommendation: `keep` (passes, and beats the baseline somewhere), `retire-or-rewrite` (the model does as well without it), `fix` (fails on some model), `ungraded`.
+- A skill the repo ships **SHOULD** have at least three cases.
+
+### SPEC / APP boundary (skills)
+
+| SPEC fixes (conformance) | APP decides (policy) |
+|---|---|
+| the format and its validation · source order and precedence · read-only external sources · the scan and what blocks per trust level · read-time recheck · `skill_view` confinement · a deterministic, frozen index · hidden ⇒ not offered · a step never runs without the skills it names · with/without evaluation and ternary verdicts | which external folders, and how much each is trusted · index caps and usage ranking · tool names and the alias table · overrides in the sidecar · which models a skill is evaluated on |
 
 ---
 

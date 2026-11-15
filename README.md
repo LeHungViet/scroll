@@ -12,7 +12,7 @@ scroll run  researcher --task "…"     # inner loop: one harnessed run — capp
 scroll loop LOOP.md                   # outer loop: schedule + find work + stop conditions
 ```
 
-`MIT` · `Node ≥ 20` · **Spec v1.6** · **`@agentpro/scroll` 0.11.0** · vendor-neutral — runs on Claude · OpenAI/Codex · Gemini · Grok
+`MIT` · `Node ≥ 20` · **Spec v1.8** · **`@agentpro/scroll` 0.13.0** · vendor-neutral — runs on Claude · OpenAI/Codex · Gemini · Grok
 
 > **GitHub topics:** `loop-engineering` · `agent-harness` · `agentic` · `agentic-loops` · `ai-agents` · `autonomous-agents` · `llm` · `mcp`
 
@@ -43,9 +43,11 @@ The thesis in one line: **SCROLL doesn't try to make the model smarter — it ma
 
 ---
 
-## Implementation status (2026-11-14 · v1.7)
+## Implementation status (2026-11-15 · v1.8)
 
-**Built & tested** (`test/` — **117 checks green**: 10 core + 14 runtime + 16 v1.4 + 6 v1.5 + 10 v1.6 + 36 v1.7 + 11 installers + 7 audit + 7 team-code):
+**Built & tested** (`test/` — **141 checks green**: 10 core + 14 runtime + 16 v1.4 + 6 v1.5 + 10 v1.6 + 36 v1.7 + 24 v1.8 + 11 installers + 7 audit + 7 team-code):
+
+- **§34–36 Skills** — use the skills you already have. A SCROLL agent reads skills in the open Agent Skills format (`SKILL.md`) from its own folder, the repo, and any read-only folder you point it at — another agent tool's skills folder included — with clear precedence and no copying. **The model only sees what passed**: every skill is validated and scanned (live credentials, exfiltration, remote-code pipes, destructive commands, hidden text, prompt injection) before it reaches the index, and scanned again at read time if it changed; how strict the scan is depends on how much you trust the source, and there is no flag to force a blocked skill in. Skills built around tools the agent lacks are hidden; the rest get a map from their tool names to the agent's (`AskUserQuestion → ask_owner`) without editing a line of the skill. The index is byte-stable for the prompt cache, capped by count and tokens, and `skill_list` / `skill_view` reach the rest. `scroll skill eval` runs each case **with and without** the skill on every model you name, with a blind judge, and says whether the skill earns its tokens (`keep`, `retire-or-rewrite`, `fix`). The suite plants eight bugs in the loader and fails unless each is caught.
 
 - **§31–33 Subject memory** — one memory per person, group, project or agent, shared by every surface that talks to it (voice, chat, messaging, other agents). **The agent proposes; the machine decides**: a fact is accepted only with a verbatim quote from a stored turn **of the person it is about**, through one five-layer gate (taxonomy · evidence · provenance floor · sensitivity + secret scan · instruction-like content). Sessions and day notes give the agent continuity across surfaces; the load contract is built by code, frozen for the session and hashed (cacheable, replayable). Search is deterministic and every read is logged. **Forget reaches every copy** — journal, checkpoints, stored turns, cards, ledgers — and a tombstone stops it from being learned again. Groups share facts by namespace; one member never sees another's. Zero dependencies, no vector DB, files only; the test suite plants six bugs in the memory code and fails unless each is caught.
 
@@ -156,6 +158,29 @@ Default is **single-agent**. Multi-agent is opt-in and only when a task is genui
 
 ---
 
+## Skills you already have
+
+```yaml
+# scroll.config.yaml — read-only folders; nothing else on the machine is read
+skills:
+  external_dirs:
+    - { path: ~/.agents/skills, trust: trusted }
+    - { path: ~/.claude/plugins, layout: claude-code-plugins, trust: trusted }
+    - ~/shared/team-skills            # trust defaults to community: stricter scan
+```
+
+```bash
+scroll skill sources --detect     # which skill folders of other tools exist here
+scroll skill list --agent atlas   # what atlas can use; --all shows hidden / blocked / invalid and why
+scroll skill index --agent atlas  # the <available_skills> block for its cached prefix
+scroll skill scan --agent atlas   # skills-compat.json: ok · partial · hidden, with your overrides kept
+scroll skill eval report-writer --provider codex,claude --judge
+```
+
+An agent that declares `skills.read` gets the index plus `skill_list` / `skill_view`; a `WORK.md` step can name `skills: [...]` to load them in full (and does not run if one is refused). Precedence: `agents/<name>/skills/` → `skills/` → `external_dirs` in order. Spec: [§34–36](./SPEC.md).
+
+---
+
 ## Watch, control, and read back
 
 ```
@@ -189,11 +214,12 @@ SCROLL doesn't rely on you reading the docs — the correct path is the only one
 | `scroll registry` | Scan agents → a config/observability view | ✅ built |
 | `scroll cost <task> [--language vi]` | Single vs multi token estimate (language-aware) | ✅ built |
 | `scroll mcp add <name>` | Wire an MCP server / connector into `.mcp.json` (`${vault:KEY}` creds · per-tool risk) | ✅ built |
-| `scroll skill add <ref>` | Install / scaffold a `SKILL.md` skill (`--agent` to attach) | ✅ built |
+| `scroll skill add <ref>` | Install / scaffold a `SKILL.md` skill (`--agent` to attach); a skill the scan blocks is refused | ✅ built |
+| `scroll skill list · view · index · scan · check · eval · sources` | Load skills from every source, see why one is hidden or blocked, write the compat sidecar, evaluate with vs without (§34–36) | ✅ built |
 | `scroll plugin add <ref>` | Unpack an agent-pack bundle (agents + skills + merged `.mcp.json`) | ✅ built |
 | `scroll memory <cmd>` | Subject memory: `new · link · show · snapshot · search · forget · review · member · consolidate · fsck · erase` | ✅ built |
 
-Useful `run` flags: `--subject <sid|alias> --memory-store <dir>` (load that subject's memory contract), `--resume` (crash-resume), `--worktree` (git-worktree isolation), `--risk <tier>`, `--auto-approve`, `--language <code>`, `--max-usd` / `--max-iterations`.
+Useful `run` flags: `--skill a,b` (load these skills in full for the task), `--subject <sid|alias> --memory-store <dir>` (load that subject's memory contract), `--resume` (crash-resume), `--worktree` (git-worktree isolation), `--risk <tier>`, `--auto-approve`, `--language <code>`, `--max-usd` / `--max-iterations`.
 
 ---
 

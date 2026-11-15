@@ -86,12 +86,17 @@ await t('skill add rejects a folder with no SKILL.md / bad frontmatter', () => {
   assert.throws(() => skillAdd('empty', {}, root), /no SKILL.md/);
 });
 
-await t('skill add --new scaffolds a valid stub', () => {
+await t('skill add --new scaffolds a valid stub', async () => {
   const root = mkroot();
   const res = skillAdd('triage', { new: true }, root);
   assert.equal(res.scaffolded, true);
   const md = fs.readFileSync(path.join(root, 'skills', 'triage', 'SKILL.md'), 'utf8');
-  assert.ok(/name: triage/.test(md) && /description:/.test(md) && /triggers:/.test(md));
+  assert.ok(/name: triage/.test(md) && /description:/.test(md));
+  // v1.8: the open Agent Skills format — no SCROLL-only `triggers`; the stub itself validates
+  assert.ok(!/^triggers:/m.test(md), 'no legacy triggers field');
+  const { parseSkillMd, validateSkill } = await import('../lib/skills.js');
+  const p = parseSkillMd(md);
+  assert.deepEqual(validateSkill({ dir: path.join(root, 'skills', 'triage'), frontmatter: p.frontmatter, body: p.body }, { strict: true }).errors, []);
 });
 
 await t('skill add --agent attaches to IDENTITY.skills (idempotent)', () => {
