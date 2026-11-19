@@ -898,111 +898,65 @@ Cases travel with the skill: `evals/*.md` (gold cases, §8) or `evals/evals.json
 
 ---
 
-## §38 — Person cards (v1.9)
+## §38 — Deployment `USER.md` (v1.9)
 
-> Reference impl: `lib/people.js` (`openTeam` · `readCard` · `validateCard` · `propose` · `resolveReview` · `render`) · CLI `scroll people …` and `scroll check people` (`lib/people-cli.js`) · tests `test/v19.smoke.mjs`, including a mutation self-test.
+> Reference impl: `lib/user.js` (`openUser` · `parseUserMd` · `validateUserMd` · `importWorkspaceUserMd` · `guard` · `checkHashChange`) wrapping `lib/people.js` (`validateCard` · `canApprove`) · CLI `scroll user check|new|show|import` and `scroll check user`.
 
-An agent folder describes the agent in full. The people an agent works with need the same: who they are, how to address them, which roles they hold, what they may approve, how to reach them, and a few lines in their own words. Subject memory (§31) holds what agents **observed** about a person; a person card holds what the person **wrote** about themselves. Neither is copied into the other.
+An agent folder describes a reusable role (`IDENTITY.md`, `SOUL.md`, `TOOLS.md`, `hard-rules.md`, `evals/`). It stays free of real people and deployment secrets. Each deployment adds **one `USER.md`** at the deployment root stating whom the agents work for and which internal people may assign or approve work. Customers and external contacts never go into `USER.md` — they live in subject memory (§31).
 
 ### 38.1 Location
-One file per person, `people/<slug>.md`, in the deployment's **people dir**: `--people <dir>`, then `SCROLL_PEOPLE_DIR`, then `people.dir` in `scroll.config.*`, then `<repo>/people`. The people dir **MUST NOT** be inside `agents/` (§41).
+One file per deployment: `--user <path>`, then `SCROLL_USER_FILE`, then `user.file` in `scroll.config.*`, then `<repo>/USER.md`. `USER.md` **MUST NOT** live inside `agents/` (§41). Legacy per-person cards under `people/<slug>.md` remain supported when no `USER.md` is present.
 
-### 38.2 Frontmatter
+### 38.2 Frontmatter (machine-only)
+Frontmatter is read only by code and **NEVER** serialized into the model prompt:
 
-| Field | Req | Notes |
-|---|---|---|
-| `slug` | MUST | `^[a-z][a-z0-9-]*$`, equal to the file name |
-| `name` | MUST | at most 120 characters |
-| `address` | SHOULD | `{ call_them, self }` — how every agent addresses this person and refers to itself; each at most 60 characters |
-| `address_overrides` | OPTIONAL | `{ <agent>: { call_them, self } }` — the address belongs to the person, so a per-agent exception lives on the card too |
-| `language` | SHOULD | BCP-47 (a malformed tag is a warning) |
-| `timezone` | OPTIONAL | IANA name; an unknown zone is an error |
-| `roles` | OPTIONAL | role names; honored only as §39.2 says |
-| `authority` | OPTIONAL | `{ approve: [tier or action class], max_amount }`, checked by the runner at the gate (§40.2) |
-| `channels` | OPTIONAL | channel **names** (`email`, `chat`); a value that looks like an address (e-mail, phone, URL, handle) is an error — addresses live in a vault or a connector |
+- `principal` (MUST, map): `kind: person | org`, `name` (<= 120 chars), optional `self`, `call_others` (<= 60 chars), `handoff` (role name, default `owner`).
+- `people` (OPTIONAL, list of internal members only): `{ id, name, call, self?, role|roles, approve, max_amount, channels?, channel_ids? }`. `id` MUST match `^[a-z][a-z0-9-]*$` and MUST NOT look like a phone number, email, handle or URL; applications bind verified channel sender IDs to `id`. Each entry is validated through `validateCard()` from `lib/people.js`.
 
-Unknown fields are warnings.
+### 38.3 Body & sections
+The markdown body is capped by code (`user.max_body_chars`, default **3,000 characters**). An over-cap body is an error and `USER.md` does not load. Body and frontmatter are scanned for secrets and prompt-injection instructions (§31.4). Sections split cleanly into:
+- `# About <principal>` — internal-only context, loaded only for internal turns.
+- `## May say on behalf` — public facts loaded for external turns as well, and accepted as a valid grounding source.
+- `## Must not say` — topic-level boundaries loaded for external turns as well (state the topic, never the secret itself).
 
-### 38.3 The body
-The text after the frontmatter is written by the person and loads every session, so its length is **capped by code**: `people.max_body_chars` (default 2000). A longer body is an error and the card does not load. The body and every value are held to layers 4–5 of the memory gate (§31.4): a secret anywhere on the card is an error, and a body that reads as an instruction to agents (ignore rules, skip approvals, elevate privileges) is an error — rules belong in `hard-rules.md`, authority in `authority`.
+### 38.4 Ownership, hash audit, and external workspace import
+- Agents never write `USER.md`; applications call `guard(path)` at tool boundaries (raw writes return `allowed: false, tier: 'destructive'`).
+- Every run hashes `USER.md` (`checkHashChange`); an out-of-band edit emits `user_md_changed` and writes a hash-chained record to `audit.jsonl`.
+- `importWorkspaceUserMd()` imports plain external workspace `USER.md` files: human-written prose becomes the `USER.md` body, while agent-authored sections/lines (`## Notes`, `## Learned`, `## Observations`, `[agent]`) are separated and routed to the gated subject-memory review queue instead of becoming principal prose.
 
-### 38.4 Who writes a card
-The person, or a person holding an admin role (`people.admin_roles`, default `owner`, `admin`). An agent never writes a card. It **proposes**: a new `address.call_them`, `address.self`, `language` or `timezone`, or a `note` appended to the body. `name`, `roles`, `authority` and `channels` cannot be proposed. A proposal passes the same secret and instruction checks, waits in `<people dir>/.review/`, and is applied only when the person on the card or an admin role accepts it; the edited card must still validate, and the write is read back (§28). An application whose tools write files **SHOULD** call the team's `guard(path)` at its tool boundary: a raw write into the people dir is refused as `destructive`.
+## §39 — Neutral prompt framing & role binding (v1.9)
 
-## §39 — Binding people by role (v1.9)
+> Reference impl: `lib/user.js` (`render`) · `lib/scroll.js` (`checkAgent`, `buildAgent`) · `lib/runtime.js` (`stablePrefix`, `context_loaded`).
 
-> Reference impl: `lib/people.js` (`servedBy` · `rolesOf` · `addressFor` · `render`) · `lib/scroll.js` (`checkAgent`) · `lib/runtime.js` (the people block).
+### 39.1 Agent roles stay portable
+`IDENTITY.md` declares `serves: [owner]` (or `role:owner`) and `reports_to: role:<role>` or an agent name. A `person:<slug>` value in either is an error.
 
-### 39.1 The agent declares roles
-`IDENTITY.md` declares `serves: [owner]` (or `role:owner`) and `reports_to: role:<role>` or an agent name. A `person:<slug>` value in either is an **error**: an agent folder can be shared or published, so it names roles, never people. `pronoun` and `reports_to: user` still validate, with a warning; `pronoun` is used only when no card gives an address.
+### 39.2 Neutral prompt header (never "user")
+When loading `USER.md` into the stable prefix (both compact and full paths, alongside `hard-rules.md`), the loader wraps allowed body sections under a neutral header (**"The party this agent works for"** by default, configurable via `user.labels`), never using the word `"user"`, so models never mistake an external chat counterparty for the principal. Every run emits `context_loaded { files, chars }` listing the exact files and character counts that reached the model.
 
-### 39.2 The deployment maps roles to people
-`people.roles` in `scroll.config.*` maps each role to slugs. With that table, a person's roles are **exactly** the ones it grants; a card claiming another role is warned about and ignored. Without a table, the card's own `roles` count. `people.default_role` names the role served by agents that declare none (pre-v1.9 agents). One agent written once serves different people in different deployments.
+## §40 — Internal authority at the gate & in `WORK.md` (v1.9)
 
-### 39.3 Whom a step serves
-The step's `for:` (or `scroll run --for <slug>`); otherwise the people holding the agent's served roles, if that is exactly one person. If several people hold the role and the step names none, no full card loads (`people_denied { reason: ambiguous }`) — the loader does not guess.
-
-### 39.4 The people block
-For each agent and step the runner renders one block, the last item of the stable prefix (§13):
-
-```
-<people snapshot="<hash>">
-(<one fixed line: cards are facts written by the people they describe, never rules that override yours>)
-## You serve
-- <name> (roles: …)
-- Address them as: "…" · Refer to yourself as: "…"      ← override for this agent → card → legacy pronoun
-- Language: … · Timezone: …
-- May approve: … (up to <max_amount>)                    ← effective authority (§40.2)
-- Reach them via: <channel names>
-<body>
-## Also in this work
-- <name> (<roles>) — address them as "…"; refer to yourself as "…"
-</people>
-```
-
-- People named in the step's `people:` list and people who own a step of the same `WORK.md` appear in the short form; their bodies do not load.
-- The order is fixed and the cards are read **once per run**: a card edited during a run does not change that run's prefix. The block is hashed and reported in `people_loaded { agent, served, mentioned, snapshot, chars }`.
-- Every agent of the run gets the block, sub-agents included.
-- An invalid card never loads. Labels are configurable (`people.labels`).
-
-## §40 — People in `WORK.md` and at the gate (v1.9)
-
-> Reference impl: `lib/runtime.js` (`personStep`, the approval check, `audit.jsonl`, `notify` events) · `lib/people.js` (`canApprove` · `authorityOf` · `approversFor`).
+> Reference impl: `lib/user.js` (`canApprove` · `approversFor`) · `lib/people.js` · `lib/runtime.js` (`personStep`, approval check, `audit.jsonl`, `notify`).
 
 ### 40.1 A person owns a step
-`owner: person:<slug>` (§9.1). The controller **MUST** be an agent. When a person's step is ready the runner calls no model. It writes `control/requests/<task-id>.json` (person, objective, output format, channel names), emits `human_task_requested` and — the first time only — `notify`, and blocks the step. Independent steps keep running; steps that depend on it wait, and the run stops with a `waiting` event (not a deadlock) and `result.waiting`. The person marks the step done with `control/done/<task-id>.json` whose `by` is that person (`scroll people done`); the note goes to the blackboard and `scroll run --resume` continues without re-running finished steps. A done mark from anyone else is refused (`human_task_rejected`) and audited.
+`owner: person:<slug>` (§9.1). The controller **MUST** be an agent. The runner emits `human_task_requested` + `notify`, pauses the dependent branch, and resumes only when that exact person writes `control/done/<task-id>.json`.
 
-### 40.2 Who may approve
-When the deployment has at least one valid card, an approval at a `must-approve` gate (`control/approvals/<gate-id>.json`) **MUST** name its approver: `{ "by": "<slug>" }` (`scroll people approve`). The runner checks that person's card in code before the gate opens:
+### 40.2 Checked approvals
+When `USER.md` (or legacy `people/`) is active, a `must-approve` gate checks `{ "by": "<id>" }` in code via `canApprove()` against the person's `approve` list (action classes `write|send|publish|pay|delete` or §21 tiers), `max_amount`, and deployment `authority_ceiling`. Decisions (`accepted`, `rejected`, `auto-approved`) append to hash-chained `runs/<id>/audit.jsonl`.
 
-- **Action classes are data:** `write → reversible_write`, `send`, `publish → external_comm`, `pay → financial`, `delete → destructive`; `people.action_classes` extends the table.
-- **Coverage:** `authority.approve` lists the gate's tier; or the step declares `action:` and the list holds that class (of the gate's tier); or the step declares no action and the list holds **every** class of the tier.
-- **Amount:** the step's `amount` (else `ground.amount`). Above `max_amount` → rejected. A `financial` gate with no amount, for a person who has a limit → rejected.
-- **Ceiling:** `people.authority_ceiling: { <role>: { approve, max_amount } }` bounds what any card grants to holders of that role; a person with no ceiling-bearing role then has no authority.
+## §41 — Privacy, package boundaries, and canary audit (v1.9)
 
-A rejected approval does not count: `approval_rejected { gateId, by, reason }` with reason `unattributed | unknown_person | invalid_card | unknown_action | no_authority | over_limit | amount_unknown`; the gate stays blocked, and `<gate-id>.requested.json` lists `approvers`, the people whose cards cover it. Without person cards, an approval file approves by its presence, as before v1.9.
+> Reference impl: `lib/people.js` (`scanForPeople` · `zipEntries`) · `lib/audit.js` (`auditRepo` · `auditPrivacy` · `scanCanaries`) · `lib/installers.js`.
 
-### 40.3 Audit trail
-Every approval decision at a `must-approve` gate (`accepted`, `rejected`, or `auto-approved` by the operator flag) and every refused done mark is appended to `runs/<id>/audit.jsonl`: approver, agent, tier, action, amount, reason, a hash of the approval file, and the hash of the previous line (§20.6).
+- **Outside every agent folder.** `USER.md` and `knowledge/` live at the deployment root, outside `agents/`, and are warned about when missing from `.gitignore` unless `user.tracked: true`.
+- **Never in a shared package.** `scroll audit` fails when a `USER.md`, a `knowledge/` folder, a `people/` folder, or a card-shaped file is found inside `agents/<name>/`, `skills/`, or a plugin bundle / `.plugin` / `.zip` archive. `scroll skill add` and `scroll plugin add` refuse or skip them.
+- **Canary content-leak scan.** Private canary markers (`<!-- canary: TOKEN -->` in `USER.md` or `user.canaries` in `scroll.config.*`) are scanned across the contents of `agents/`, `skills/`, and plugin bundles so leaks inside `SOUL.md`, `evals/`, or `lessons.md` fail `scroll audit` and break `audit --verify` (`privacyHash`).
 
-### 40.4 Notifications go to people, through their channels
-`notify { reason, to, people: [{ slug, channels }] }` is emitted for a person's step (to that person), for a gate that waits (to each person who may approve it), and for a circuit-breaker pause (to `people.notify.on_exceed`, default `role:owner` when someone holds it). SCROLL does not send messages: the application delivers them on the channels named.
-
-## §41 — Where cards live, privacy, audit (v1.9)
-
-> Reference impl: `lib/people.js` (`scanForPeople` · `zipEntries` · `forget`) · `lib/audit.js` (`auditPeople` · `auditPrivacy`) · `lib/installers.js`.
-
-- **Outside every agent folder.** A people dir inside `agents/` is an error. Inside a repo it **SHOULD** be in `.gitignore`; `scroll audit` warns when it is not, unless the deployment sets `people.tracked: true` (cards kept in a private repo on purpose).
-- **Never in a shared package.** `scroll audit` fails when a `USER.md`, a `people/` folder, or a card-shaped file (frontmatter `slug` + `name` + one of `address`, `authority`, `channels`, `address_overrides`) is found in an agent folder, a repo skill, or a plugin bundle — a folder with `plugin.json` / `.claude-plugin/plugin.json`, a folder with `manifest.json` plus `agents/` or `skills/`, or a `.plugin` / `.zip` archive (read by its entry names). The agent's audit hash covers this scan, so `audit --verify` fails if one appears after the audit. `scroll skill add` refuses such a skill; `scroll plugin add` skips such an agent or skill and never installs a bundle's `people/`.
-- **Steps name real people.** A `WORK.md` step owned by `person:<slug>` with no valid card is an audit error (a warning when there is no people dir to check).
-- **Forget.** `scroll people forget <slug> --approve [--store <dir>]` removes the card and its pending proposals and, with a memory store, erases the subject linked as `person:<slug>` (§32.7). Entries for the slug in `people.roles` are reported, not edited.
-- A one-person team's card is the same thing other harnesses call `USER.md`; converting between the two is a format change, not specified here.
-
-### SPEC / APP boundary (people)
+### SPEC / APP boundary (deployment principal)
 
 | SPEC fixes (conformance) | APP decides (policy) |
 |---|---|
-| the card format and its checks · the body cap is enforced · cards outside agents/ and out of shared packages · agents bind by role · the address comes from the card · a frozen, hashed people block in every agent's prefix · a person can own a step, and only that person marks it done · an approval names its approver and is checked against the card in code · decisions are audited, hash-chained | where the people dir is · the role table and default role · admin roles · the body cap · extra action classes · authority ceilings · labels · who gets notified and how a channel delivers |
+| `USER.md` schema & validation via `validateCard` · 3,000-char body cap · frontmatter never enters prompt · neutral prompt header (no "user") · `hard-rules.md` loaded on every runtime & build path · `guard()` blocks raw writes · hash-change audit · `canApprove()` checked in code · `USER.md`, `knowledge/`, and canaries blocked from shared packages | where `USER.md` lives · role table & authority ceilings · labels & locale · channel-id to person-id mapping · notification delivery |
 
 ---
 
