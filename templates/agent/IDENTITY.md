@@ -3,7 +3,7 @@
 name: researcher                      # lowercase, unique. CHANGE ME.
 title: Research Synthesizer           # human label. CHANGE ME.
 version: 1.0.0                        # semver — bump when you change behavior
-pronoun: "neutral"                    # how it addresses the user
+serves: [owner]                       # v1.9: roles it serves — each person's card (people/<slug>.md) says how to address them
 language: en                          # primary output language
 
 # Which runtimes this one source transpiles to:

@@ -12,7 +12,7 @@ scroll run  researcher --task "…"     # inner loop: one harnessed run — capp
 scroll loop LOOP.md                   # outer loop: schedule + find work + stop conditions
 ```
 
-`MIT` · `Node ≥ 20` · **Spec v1.8** · **`@agentpro/scroll` 0.13.0** · vendor-neutral — runs on Claude · OpenAI/Codex · Gemini · Grok
+`MIT` · `Node ≥ 20` · **Spec v1.9** · **`@agentpro/scroll` 0.14.0** · vendor-neutral — runs on Claude · OpenAI/Codex · Gemini · Grok
 
 > **GitHub topics:** `loop-engineering` · `agent-harness` · `agentic` · `agentic-loops` · `ai-agents` · `autonomous-agents` · `llm` · `mcp`
 
@@ -43,9 +43,11 @@ The thesis in one line: **SCROLL doesn't try to make the model smarter — it ma
 
 ---
 
-## Implementation status (2026-11-15 · v1.8)
+## Implementation status (2026-11-19 · v1.9)
 
-**Built & tested** (`test/` — **141 checks green**: 10 core + 14 runtime + 16 v1.4 + 6 v1.5 + 10 v1.6 + 36 v1.7 + 24 v1.8 + 11 installers + 7 audit + 7 team-code):
+**Built & tested** (`test/` — **158 checks green**: 10 core + 14 runtime + 16 v1.4 + 6 v1.5 + 10 v1.6 + 36 v1.7 + 24 v1.8 + 17 v1.9 + 11 installers + 7 audit + 7 team-code):
+
+- **§38–41 People in the agent team** — every person gets a **card** (`people/<slug>.md`) they write themselves: how to address them, their roles, what they may approve, which channels reach them, and a short note capped by code. Cards live **outside** `agents/`, so an agent folder stays shareable. Agents bind to **roles** (`serves: [owner]`); the deployment maps roles to people, and every agent of the team — sub-agents included — loads the same card into its cached prefix, so changing how a person is addressed is one edit, not one per agent. A person can **own a step** in `WORK.md`: the run asks them, stops there, and resumes when they (and only they) mark it done. An approval **names its approver**, and the runner checks that person's card — action class, amount, the deployment's ceiling — before the gate opens; every decision goes to a hash-chained audit trail. `scroll audit` fails when a card, a `USER.md` or a `people/` folder travels inside an agent folder, a skill or a plugin. Agents never edit cards: they propose, and the person decides. The suite plants seventeen bugs in the people and runtime code and fails unless each is caught.
 
 - **§34–36 Skills** — use the skills you already have. A SCROLL agent reads skills in the open Agent Skills format (`SKILL.md`) from its own folder, the repo, and any read-only folder you point it at — another agent tool's skills folder included — with clear precedence and no copying. **The model only sees what passed**: every skill is validated and scanned (live credentials, exfiltration, remote-code pipes, destructive commands, hidden text, prompt injection) before it reaches the index, and scanned again at read time if it changed; how strict the scan is depends on how much you trust the source, and there is no flag to force a blocked skill in. Skills built around tools the agent lacks are hidden; the rest get a map from their tool names to the agent's (`AskUserQuestion → ask_owner`) without editing a line of the skill. The index is byte-stable for the prompt cache, capped by count and tokens, and `skill_list` / `skill_view` reach the rest. `scroll skill eval` runs each case **with and without** the skill on every model you name, with a blind judge, and says whether the skill earns its tokens (`keep`, `retire-or-rewrite`, `fix`). The suite plants eight bugs in the loader and fails unless each is caught.
 
@@ -142,7 +144,7 @@ security:
   approval:      { financial: must-approve, destructive: must-approve }
 ```
 
-`must-approve` blocks until an approval file appears under `control/approvals/`. **Grounding** runs first for `financial`/`destructive`: every declared parameter (a product code, an amount, a customer id) must trace to a real source seen earlier in the run — otherwise the action is **denied and never runs, even if "approved."** An invented invoice can't be issued.
+`must-approve` blocks until an approval file appears under `control/approvals/`. With a team configured, that file must say who approved (`scroll people approve <gate> --run <dir> --by <slug>`), and the runner checks that person's card before the gate opens — see [People](#people-in-the-agent-team). **Grounding** runs first for `financial`/`destructive`: every declared parameter (a product code, an amount, a customer id) must trace to a real source seen earlier in the run — otherwise the action is **denied and never runs, even if "approved."** An invented invoice can't be issued.
 
 ---
 
@@ -155,6 +157,45 @@ Agents coordinate through **files**, not a message bus:
 - **Worktree-lite isolation** — parallel tasks write to isolated dirs, so two agents never collide.
 
 Default is **single-agent**. Multi-agent is opt-in and only when a task is genuinely parallel — it costs ~15× the tokens, so SCROLL estimates cost (language-aware) *before* it spawns.
+
+---
+
+## People in the agent team
+
+Agents are folders; people are **cards** — one per person, written by that person, kept **outside** `agents/` (and out of git by default):
+
+```yaml
+# people/ana-ruiz.md
+---
+slug: ana-ruiz
+name: Ana Ruiz
+address: { call_them: "Ana", self: "I" }     # every agent addresses her this way
+roles: [owner]
+authority: { approve: [send, pay, delete, publish], max_amount: 5000 }   # checked by code at the gate
+channels: [email, chat]                        # names only; addresses live in a vault/connector
+---
+Runs the shop. Reports as three bullets before 9am. Never quote a price she has not confirmed.
+```
+
+```yaml
+# scroll.config.yaml — the deployment maps roles to people
+people:
+  roles: { owner: [ana-ruiz], staff: [ben-ode] }
+  authority_ceiling: { staff: { approve: [send], max_amount: 100 } }
+```
+
+```yaml
+# agents/clerk/IDENTITY.md — the agent names a role, never a person
+serves: [owner]
+reports_to: role:owner
+```
+
+- Every agent serving `owner` loads Ana's card (fixed order, frozen for the run, in the cached prefix). Change her address once; every agent follows.
+- A `WORK.md` step can be hers: `owner: person:ana-ruiz`. The run asks (request file + a `notify` event naming her channels), stops at that step, and continues after `scroll people done <task> --run <dir> --by ana-ruiz` and `scroll run --resume`.
+- Agents never edit a card: `scroll people propose` queues a change; the person (or an admin role) accepts it.
+- `scroll check people` validates the cards; `scroll audit` fails if a card or a `USER.md` ships inside an agent, a skill or a plugin.
+
+Spec: [§38–41](./SPEC.md).
 
 ---
 
@@ -218,8 +259,9 @@ SCROLL doesn't rely on you reading the docs — the correct path is the only one
 | `scroll skill list · view · index · scan · check · eval · sources` | Load skills from every source, see why one is hidden or blocked, write the compat sidecar, evaluate with vs without (§34–36) | ✅ built |
 | `scroll plugin add <ref>` | Unpack an agent-pack bundle (agents + skills + merged `.mcp.json`) | ✅ built |
 | `scroll memory <cmd>` | Subject memory: `new · link · show · snapshot · search · forget · review · member · consolidate · fsck · erase` | ✅ built |
+| `scroll people <cmd>` | Person cards: `check · new · list · show · propose · review · approve · done · forget` (`scroll check people` = `scroll people check`) | ✅ built |
 
-Useful `run` flags: `--skill a,b` (load these skills in full for the task), `--subject <sid|alias> --memory-store <dir>` (load that subject's memory contract), `--resume` (crash-resume), `--worktree` (git-worktree isolation), `--risk <tier>`, `--auto-approve`, `--language <code>`, `--max-usd` / `--max-iterations`.
+Useful `run` flags: `--for <slug>` (the person this step serves) · `--people <dir>` (where the cards are) · `--action <class> --amount <n>` (what an approver must cover), `--skill a,b` (load these skills in full for the task), `--subject <sid|alias> --memory-store <dir>` (load that subject's memory contract), `--resume` (crash-resume), `--worktree` (git-worktree isolation), `--risk <tier>`, `--auto-approve`, `--language <code>`, `--max-usd` / `--max-iterations`.
 
 ---
 
@@ -232,7 +274,7 @@ Useful `run` flags: `--skill a,b` (load these skills in full for the task), `--s
 Your *agents* are never packaged — they're folders you own and version, like `AGENTS.md`.
 
 ## Learn more
-- [`SPEC.md`](./SPEC.md) — the formal agent-folder + frontmatter spec (incl. §21 permissions, §22 grounding, §23 LOOP)
+- [`SPEC.md`](./SPEC.md) — the formal agent-folder + frontmatter spec (incl. §21 permissions, §22 grounding, §23 LOOP, §38–41 people)
 - [`AGENTS.md`](./AGENTS.md) — how AI coding tools follow SCROLL
 - [`templates/`](./templates/) — a worked agent + a `WORK.md` + a `LOOP.md`
 

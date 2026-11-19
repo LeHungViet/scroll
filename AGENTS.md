@@ -34,6 +34,8 @@ agents/<name>/
 
 12. **Skills are folders the loader admits, not text you paste into prompts (v1.8).** Use the open `SKILL.md` format (`name` + a `description` that says what and when). Put the agent's own skills in `agents/<name>/skills/`, shared ones in `skills/`, and other tools' skill folders under `skills.external_dirs` in `scroll.config.yaml` — never copy a skill's text into `SOUL.md` or code. Declare what a skill needs (`allowed-tools` or `metadata.scroll.requires`), give it ≥3 cases in its `evals/`, and run `scroll skill eval` — keep a skill only if it beats the baseline. Never weaken the scan or trust a source on a model's say-so.
 
+13. **People are cards the people write, outside `agents/` (v1.9).** Never put a person's name, how to address them, a `USER.md` or a `people/` folder in an agent folder, a skill or a plugin — `scroll audit` fails on it. An agent declares the roles it serves (`serves: [owner]`, `reports_to: role:owner`); the deployment maps roles to people in `scroll.config.yaml` and keeps each person's card in its people dir. A person can own a `WORK.md` step (`owner: person:<slug>`), and an approval names who approved it — the runner checks that person's card. Don't hand-roll a "who may approve" check in code or prose.
+
 ## Before you say you're done
 Run, in order — and do not merely *claim* you ran them; the human/CI re-runs `scroll audit --verify`:
 ```bash
