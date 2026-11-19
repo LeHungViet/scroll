@@ -958,6 +958,16 @@ When `USER.md` (or legacy `people/`) is active, a `must-approve` gate checks `{ 
 |---|---|
 | `USER.md` schema & validation via `validateCard` · 3,000-char body cap · frontmatter never enters prompt · neutral prompt header (no "user") · `hard-rules.md` loaded on every runtime & build path · `guard()` blocks raw writes · hash-change audit · `canApprove()` checked in code · `USER.md`, `knowledge/`, and canaries blocked from shared packages | where `USER.md` lives · role table & authority ceilings · labels & locale · channel-id to person-id mapping · notification delivery |
 
+## §42 — Per-turn internal vs external boundary & group wall (v1.9)
+
+> Reference impl: `lib/user.js` (`classifyTurn` · `isIdentityQuestion` · `checkAiDisclosure` · `applyAiLabel`) · `lib/runtime.js` (per-turn enforcement) · tests `test/v19-boundary.smoke.mjs`.
+
+Whether a turn is **internal** or **external** is computed by code on **every turn** — never by a static deployment mode or by matching a sender's display name:
+
+- **Verified identity only:** a sender is `internal` only when their verified channel ID (resolved via `channelMap` or `channel_ids` on `USER.md`) or verified internal ID matches a valid person in `USER.md`. Missing sender IDs fail closed to `external`.
+- **Group lowest-trust content wall:** in a group chat, speaker authority tracks the speaker, while loaded content and output rules track the **least-trusted participant present**. If any participant is `external`, `contentAudience` is `external` — `# About` private notes never load, write tools are stripped (`toolPolicy = 'none'`), and subject memory is restricted to the chat's own subject (`chat_only`).
+- **External output gate:** external turns cannot invoke `reversible_write`, `financial`, or `destructive` tools; replies stay drafts (`decision: 'hold'`) awaiting human approval by default; unreviewed replies for `self`/`org` carry a machine-attached AI label from config/locale; identity questions escalate to handoff for `speaks_as: owner` and require explicit AI acknowledgement for `self`/`org`.
+
 ---
 
 ## Design note — §28–30 and the failure they answer
