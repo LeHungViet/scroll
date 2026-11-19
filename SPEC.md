@@ -968,6 +968,24 @@ Whether a turn is **internal** or **external** is computed by code on **every tu
 - **Group lowest-trust content wall:** in a group chat, speaker authority tracks the speaker, while loaded content and output rules track the **least-trusted participant present**. If any participant is `external`, `contentAudience` is `external` — `# About` private notes never load, write tools are stripped (`toolPolicy = 'none'`), and subject memory is restricted to the chat's own subject (`chat_only`).
 - **External output gate:** external turns cannot invoke `reversible_write`, `financial`, or `destructive` tools; replies stay drafts (`decision: 'hold'`) awaiting human approval by default; unreviewed replies for `self`/`org` carry a machine-attached AI label from config/locale; identity questions escalate to handoff for `speaks_as: owner` and require explicit AI acknowledgement for `self`/`org`.
 
+## §43 — `speaks_as`, machine-enforced `style:`, Voice hooks, presets, and reply grounding (v1.9)
+
+> Reference impl: `lib/style.js` (`ENFORCED_STYLE_KEYS` · `validateStyle` · `enforceStyle` · `hasBareNumericSlider`) · `lib/grounding.js` (`collectPrincipalSources` · `groundReply` · `verifyClaimsInvariant`) · `lib/scroll.js` (`AGENT_PRESETS` · `scaffold`) · `lib/runtime.js` (2 official voice hooks) · tests `test/v19-style-grounding.smoke.mjs`.
+
+### 43.1 `speaks_as` & role setup presets
+`IDENTITY.md` declares `speaks_as: self | owner | org` (default `self`). `scroll new <name> --preset <preset>` scaffolds standardized English blueprints for the four canonical roles: `assistant` (`self`), `service` (`org`), `proxy` (`owner`), and `teammate` (`self`).
+
+### 43.2 Machine-enforced `style:` block
+`IDENTITY.style` accepts **only** keys with deterministic code enforcement: `bubbles` (`>= 1`), `max_chars` (`>= 20`), `emoji` (`>= 0`), `follow_up` (`>= 0`). Any unenforced qualitative key (`warmth`, `humor`, `tone`) fails `scroll check`. `enforceStyle()` strips redundant markdown, enforces emoji/follow-up/bubble ceilings, regenerates at most once on `max_chars` breach (else holds for review), and **never alters numbers, amounts, product codes, dates, or links**.
+
+### 43.3 Two official Voice plugin hooks & safety ordering
+Conversational voice modules (persona, affective control, human-like delivery) remain at the plugin/app layer and plug into SCROLL via two hooks:
+1. **`beforeTurn()`**: returns volatile turn guidance (`<= 650` chars) appended at the **end** of the prompt after history/deliverable so the stable prefix stays cache-stable. Bare numeric sliders (`warmth: 4/5`) are rejected — plugins must translate levels into concrete behavioral wording.
+2. **`shapeOutgoing()`**: runs **after** `groundReply()` on the raw model text. `verifyClaimsInvariant(rawText, shapedText)` verifies the multiset of `(amount, code, date, link)` claims is unchanged; any perturbation reverts and holds the reply. Outbox approvals bind to `shapedHash`.
+
+### 43.4 Reply grounding (principal sources only)
+`groundReply()` checks every amount, product code, date, and link in an external reply against **principal-authored sources only** (`collectPrincipalSources`: retrieved `knowledge/` chunks, `USER.md` `May say on behalf`, tool outputs — never customer messages). It also verifies same-line `code <-> amount` pairs (`pair_mismatch`) and holds unverified high-risk claim classes (`percent`, `time`, `relative_date`, `inventory`, `written_number`) for human review.
+
 ---
 
 ## Design note — §28–30 and the failure they answer
