@@ -211,5 +211,25 @@ await t('5. Mutation self-tests: breaking code detection, link backtick strip, o
   assert.equal(resLink.ok, false, 'mutated link regex breaks backticked URLs (proves test is real)');
 });
 
+await t('6. Multi-turn topic switch & shorthand amounts: diacritic-folded compounds and million shorthands hit without prevQuery code hijack', () => {
+  const root = tmp();
+  seedDeployment(root);
+  write(path.join(root, 'knowledge', '03-events.md'), [
+    '# Event & Conference Packages',
+    '',
+    '## Hoi nghi Tron goi (Delegate Packages)',
+    '- EV-VIP: 2,250,000 VND++/guest, full day ballroom, LED 12 m2, 2 tea breaks + buffet lunch.',
+    '- EV-STD: 1,650,000 VND++/guest, full day meeting room, LED billed separately.',
+  ].join('\n'));
+  const idx = KNOWLEDGE.openKnowledge({ cwd: root });
+  const r = KNOWLEDGE.retrieveKnowledge(
+    idx,
+    'Sao goi hoi nghi ben khach san 2,25 trieu++ dat hon cho khac vay?',
+    { prevQuery: 'Ap ma PKG-WIN25 va PROMO-99OFF cho phong HRB-DLX duoc khong?', topK: 2 },
+  );
+  assert.ok(r.hits.length >= 1, 'should return hits');
+  assert.equal(r.hits[0].file, '03-events.md', `expected 03-events.md first on topic switch, got ${r.hits[0]?.file}`);
+});
+
 console.log(`\nv1.10 knowledge & grounding: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
