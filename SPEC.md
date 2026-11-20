@@ -986,6 +986,16 @@ Conversational voice modules (persona, affective control, human-like delivery) r
 ### 43.4 Reply grounding (principal sources only)
 `groundReply()` checks every amount, product code, date, and link in an external reply against **principal-authored sources only** (`collectPrincipalSources`: retrieved `knowledge/` chunks, `USER.md` `May say on behalf`, tool outputs — never customer messages). It also verifies same-line `code <-> amount` pairs (`pair_mismatch`) and holds unverified high-risk claim classes (`percent`, `time`, `relative_date`, `inventory`, `written_number`) for human review.
 
+## §44 — Large deployment knowledge retrieval, conversational mode & source-aware grounding (v1.10)
+
+> Reference impl: `lib/knowledge.js` (`indexKnowledge` · `retrieveKnowledge` · `formatKnowledgeBlock` · `openKnowledge`) · `lib/runtime.js` (`knowledge_retrieved` · conversational deliverable · `<verified-caller>`) · `lib/grounding.js` · `lib/audit.js` · tests `test/v110-knowledge.smoke.mjs`.
+
+- **Deterministic zero-dep `knowledge/` chunking & retrieval:** `openKnowledge()` indexes deployment-root `knowledge/` (outside `agents/`, per §41), splits Markdown by `##`/`###` headings with a bounded per-chunk cap (`maxChunkChars = 1600`, preserving Markdown table headers when sub-splitting), and retrieves top-K chunks via Unicode-folded BM25 + heading + bigram + exact SKU/alpha-code matching.
+- **Prompt injection + cache safety:** `runWork()` automatically retrieves relevant chunks from `knowledge/` (or accepts explicit `opts.knowledgeChunks`), injects `<retrieved-knowledge>` into the **volatile** suffix after `stablePrefix` so prompt-prefix caching stays intact, emits `knowledge_retrieved`, and passes the exact same chunks to `groundReply()`.
+- **Conversational deliverable mode:** When a turn is external, declares `style:`, uses `voiceHooks`, or sets `speaks_as: org|owner` (or `opts.conversational: true`), `runtime.js` omits the research-report `Verdict / Evidence / Assumptions / Next actions` template so `SOUL.md` and `style:` control natural chat output, and `verify()` validates conversational replies without requiring report headings.
+- **Source-aware large-KB grounding:** `grounding.js` recognizes both alphanumeric and uppercase hyphenated alpha codes (`AUR-DLX`, `FDP-STD`), strips trailing backticks on Markdown inline-code URLs, excludes explicitly marked expired/invalid/trap lines from authorized pricing pools, covers hospitality/booking inventory claims, and skips false-positive holds on clock times or percentages that appear verbatim in `principalSources` (or inside explicit refusals).
+- **Verified internal caller & clean `USER.md` audit:** Verified internal turns receive a machine-generated `<verified-caller audience="internal" ...>` header; `auditPeople()` skips redundant legacy `people/` `serves`-role warnings when deployment `USER.md` is active.
+
 ---
 
 ## Design note — §28–30 and the failure they answer

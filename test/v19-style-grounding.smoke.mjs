@@ -249,7 +249,7 @@ const KILLERS = [
     'if (false) {',
     (M) => M.groundReply('SKU-B200 is 45,000 VND.', RETRIEVED_PRICE_LIST).ok === false],
   ['grounding', 'hold triggers catch percentages/times/relative dates/inventory',
-    'const held = checkHoldTriggers ? detectHoldClaims(text) : [];',
+    'const held = checkHoldTriggers ? detectHoldClaims(text, idx) : [];',
     'const held = [];',
     (M) => M.groundReply('15% off if ordered tomorrow.', RETRIEVED_PRICE_LIST).ok === false],
   ['grounding', 'verifyClaimsInvariant catches mutated amount',
