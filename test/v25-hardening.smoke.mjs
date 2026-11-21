@@ -801,13 +801,24 @@ await t('R2-P0-1..R2-P0-4 + P1s: voiceMeta hold, appendHistory single tool resul
   assert.equal(antRes.toolCalls[0].malformed, true);
   assert.equal(antRes.toolCalls[0].truncated, true);
 
-  // Pydantic v2 anyOf nullable union unwraps cleanly, while multi-type unions preserve ALL non-null branches!
+  // Pydantic v2 anyOf nullable union unwraps cleanly, while multi-type unions (even WITH sibling `type`) preserve ALL constraints!
   const gPydantic = sanitizeGeminiSchema({
     type: 'object',
     properties: {
       opt: { anyOf: [{ type: 'string' }, { type: 'null' }], default: null },
       multi: { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'null' }] },
       arrType: { type: ['string', 'integer', 'null'] },
+      bothTypeAndAnyOf: {
+        type: ['string', 'number'],
+        anyOf: [{ type: 'string', enum: ['A'] }, { type: 'number', minimum: 10 }],
+      },
+      scalarTypeWithAnyOf: {
+        type: 'string',
+        anyOf: [{ enum: ['A'] }, { minLength: 5 }],
+      },
+      refPruned: {
+        anyOf: [{ type: 'string' }, { $ref: '#/$defs/Ignored' }],
+      },
     },
   });
   assert.equal(gPydantic.properties.opt.type, 'string');
@@ -818,6 +829,11 @@ await t('R2-P0-1..R2-P0-4 + P1s: voiceMeta hold, appendHistory single tool resul
   assert.deepEqual(gPydantic.properties.multi.anyOf, [{ type: 'string' }, { type: 'number' }]);
   assert.equal(gPydantic.properties.arrType.nullable, true);
   assert.deepEqual(gPydantic.properties.arrType.anyOf, [{ type: 'string' }, { type: 'integer' }]);
+  assert.equal(gPydantic.properties.bothTypeAndAnyOf.type, undefined);
+  assert.deepEqual(gPydantic.properties.bothTypeAndAnyOf.anyOf, [{ type: 'string', enum: ['A'] }, { type: 'number', minimum: 10 }]);
+  assert.deepEqual(gPydantic.properties.scalarTypeWithAnyOf.anyOf, [{ type: 'string', enum: ['A'] }, { type: 'string', minLength: 5 }]);
+  assert.equal(gPydantic.properties.refPruned.type, 'string');
+  assert.equal(gPydantic.properties.refPruned.anyOf, undefined);
 
   // GNU abbreviated `--recurs --forc` blocked by `rm -rf` deny rule
   const rmGnuAbbrev = evaluateExecPolicy({ command: 'rm', args: ['--recurs', '--forc', '/tmp/x'], denyRules: [['rm', '-rf']] });
@@ -879,17 +895,21 @@ rl.on('line', (line) => {
     await codexClient.close();
   }
 
-  // auth.js per-dead-lock .reap.<deadKey> + .claim.<deadReaperKey> reclaims dead lock + dead reaper cleanly
+  // auth.js per-dead-lock .reap.<deadKey> + .claim.<deadReaperKey> reclaims dead lock + dead reaper + dead claim cleanly!
   const authLockDir = path.join(tmpRoot, 'r4-auth-reap');
   fs.mkdirSync(authLockDir, { recursive: true });
   const authFile = path.join(authLockDir, 'auth.json');
   const deadLockTok = '999999-deadbeef0001';
+  const deadReapTok = '999998-deadreap0001';
   fs.writeFileSync(`${authFile}.lock`, JSON.stringify({ pid: 999999, token: deadLockTok, ts: Date.now() - 60_000 }) + '\n');
-  fs.writeFileSync(`${authFile}.lock.reap.tok-${deadLockTok}`, JSON.stringify({ pid: 999998, token: '999998-deadreap0001', ts: Date.now() - 60_000 }) + '\n');
+  fs.writeFileSync(`${authFile}.lock.reap.tok-${deadLockTok}`, JSON.stringify({ pid: 999998, token: deadReapTok, ts: Date.now() - 60_000 }) + '\n');
+  fs.writeFileSync(`${authFile}.lock.reap.tok-${deadLockTok}.claim.tok-${deadReapTok}`, JSON.stringify({ pid: 999997, token: '999997-deadclaim001', ts: Date.now() - 60_000 }) + '\n');
   const aStore = createAuthStore({ filePath: authFile });
-  await aStore.upsertProfile({ id: 'p1', provider: 'openai', kind: 'api_key', key: 'sk-test-r4' });
-  const listed = aStore.listProfiles({ provider: 'openai' });
-  assert.equal(listed.length, 1, 'auth store MUST reclaim dead .lock + dead .reap cleanly');
+  aStore.upsertProfile({ id: 'p1', provider: 'openai', type: 'api_key', apiKey: 'sk-test-r4' });
+  const refRes = await aStore.refreshTokenIfNeeded('p1');
+  assert.equal(refRes.profile.id, 'p1', 'withAuthFileLock MUST reclaim dead .lock + dead .reap + dead .claim cleanly');
+  const leftovers = fs.readdirSync(authLockDir).filter((f) => f.includes('.lock'));
+  assert.deepEqual(leftovers, [], 'no stale .lock/.reap/.claim/.retired files may remain after recovery');
 
   // P1: audit --verify MUST catch deleted agent
   const audDir = path.join(tmpRoot, 'r2-audit-del');
