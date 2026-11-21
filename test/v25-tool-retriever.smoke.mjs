@@ -349,6 +349,54 @@ INTERNAL-CANARY-DO-NOT-LEAK-IN-GROUP
   }
 });
 
+// ── G7b: Codex App-Server Native Code-Mode Direct Exposure (no double-deferral on moderate toolsets) ──
+await t('G7b: codex-app-server keeps moderate toolsets (<=60 tools) in direct mode for ALL_TOOLS while deferring >60 tools & honoring explicit mode', async () => {
+  const dir = path.join(tmpRoot, 'g7b-codex-codemode');
+  fs.mkdirSync(dir, { recursive: true });
+  scaffold('codexbot', dir);
+  const tools = createToolRegistry({
+    cwd: dir,
+    agentDir: path.join(dir, 'agents', 'codexbot'),
+  });
+  for (let i = 0; i < 24; i++) {
+    tools.register({
+      name: `ext_tool_${i}`,
+      description: `Extension tool ${i} for owner operations`,
+      risk: 'read_only',
+      parameters: { type: 'object', properties: { q: { type: 'string' } } },
+      async execute() { return { ok: true }; },
+    });
+  }
+
+  // Standard provider (>15 tools) switches to portable mode with Code-Mode safe header
+  const openaiSurface = tools.getPromptSurface({ allowWriteTools: true, providerName: 'openai' });
+  assert.equal(openaiSurface.mode, 'portable');
+  assert.match(openaiSurface.availableToolsIndex.text, /NOT preloaded in active schemas or ALL_TOOLS/);
+
+  // codex-app-server (<=60 tools, <64KB) stays direct so every tool is visible in ALL_TOOLS
+  const codexSurface = tools.getPromptSurface({ allowWriteTools: true, providerName: 'codex-app-server' });
+  assert.equal(codexSurface.mode, 'direct');
+  assert.ok(codexSurface.activeSchemas.some((s) => s.name === 'ext_tool_0'), 'ext_tool_0 must be directly exposed to codex-app-server');
+  assert.ok(codexSurface.activeSchemas.some((s) => s.name === 'ext_tool_23'), 'ext_tool_23 must be directly exposed to codex-app-server');
+
+  // Explicit mode: 'portable' MUST still override auto behavior even on codex-app-server
+  const forcedPortable = tools.getPromptSurface({ allowWriteTools: true, providerName: 'codex-app-server', mode: 'portable' });
+  assert.equal(forcedPortable.mode, 'portable');
+
+  // Adding >60 tools still activates portable deferral on codex-app-server so large MCP fleets stay bounded
+  for (let i = 24; i < 65; i++) {
+    tools.register({
+      name: `ext_tool_${i}`,
+      description: `Bulk MCP tool ${i}`,
+      risk: 'read_only',
+      parameters: { type: 'object', properties: { q: { type: 'string' } } },
+      async execute() { return { ok: true }; },
+    });
+  }
+  const largeCodexSurface = tools.getPromptSurface({ allowWriteTools: true, providerName: 'codex-app-server' });
+  assert.equal(largeCodexSurface.mode, 'portable');
+});
+
 fs.rmSync(tmpRoot, { recursive: true, force: true });
 console.log(`\n${fail ? '✖ failures:' : '✔ all green:'} ${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

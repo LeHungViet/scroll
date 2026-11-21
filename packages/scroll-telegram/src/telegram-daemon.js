@@ -536,6 +536,7 @@ export async function createTelegramFleetDaemon(config = {}, {
       enableMemory: bCfg.enableMemory !== false,
       memoryChannel: 'telegram',
       enableTools: bCfg.enableTools !== false,
+      toolsRetrieval: bCfg.toolsRetrieval || null,
       enableMcp: Boolean(bCfg.enableMcp),
       voiceHooks: bCfg.voiceHooks || null,
       requestApproval: (req) => requestHitlApproval(botObj, req),
