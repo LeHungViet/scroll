@@ -864,13 +864,17 @@ await t('R2-P0-1..R2-P0-4 + P1s: voiceMeta hold, appendHistory single tool resul
   const gRootOneOf = sanitizeGeminiSchema({
     type: 'object',
     oneOf: [
-      { properties: { x: { type: 'string' } }, required: ['x'] },
-      { properties: { y: { type: 'number' } }, required: ['y'] },
+      { properties: { x: { type: 'string' }, v: { type: 'string' } }, required: ['x'] },
+      { properties: { y: { type: 'number' }, v: { type: 'integer' } }, required: ['y'] },
     ],
   });
   assert.equal(gRootOneOf.type, 'object');
   assert.equal(gRootOneOf.anyOf, undefined);
-  assert.deepEqual(gRootOneOf.properties, { x: { type: 'string' }, y: { type: 'number' } }, 'object oneOf branch properties MUST be preserved');
+  assert.deepEqual(gRootOneOf.properties, {
+    x: { type: 'string' },
+    y: { type: 'number' },
+    v: { anyOf: [{ type: 'string' }, { type: 'integer' }] },
+  }, 'object oneOf branch properties MUST preserve both types when branches share a key');
 
   // Implicit object container (`properties` without explicit `type`) with `anyOf` MUST emit `type: 'object'`
   const gImplicitObj = sanitizeGeminiSchema({
@@ -962,20 +966,26 @@ rl.on('line', (line) => {
   fs.writeFileSync(`${authFile}.lock.reap.tok-${deadLockTok}.claim.tok-${deadReapTok}`, JSON.stringify({ pid: 999997, token: '999997-deadclaim001', ts: Date.now() - 60_000 }) + '\n');
   const aStore = createAuthStore({ filePath: authFile });
   aStore.upsertProfile({ id: 'p1', provider: 'openai', type: 'api_key', apiKey: 'sk-test-r4' });
-  // Spawn 4 real OS child processes simultaneously racing on the same triple-crash (.lock + .reap + .claim)!
+  // Spawn 4 real OS child processes synchronized on a shared start barrier racing on triple-crash (.lock + .reap + .claim)!
   const authModuleUrl = new URL('../lib/auth.js', import.meta.url).href;
+  const startAt = Date.now() + 250;
   const workerScript = `
     import { createAuthStore } from ${JSON.stringify(authModuleUrl)};
+    const delay = ${startAt} - Date.now();
+    if (delay > 0) await new Promise((r) => setTimeout(r, delay));
     const s = createAuthStore({ filePath: ${JSON.stringify(authFile)} });
     const res = await s.refreshTokenIfNeeded('p1', { force: true });
     if (res?.profile?.id !== 'p1') process.exit(2);
   `;
-  const procCodes = await Promise.all(Array.from({ length: 4 }, () => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', workerScript], { stdio: 'ignore' });
-    child.on('error', reject);
-    child.on('exit', (code) => resolve(code));
+  const procResults = await Promise.all(Array.from({ length: 4 }, () => new Promise((resolve, reject) => {
+    let stderr = '';
+    const child = spawn(process.execPath, ['--input-type=module', '-e', workerScript], { stdio: ['ignore', 'ignore', 'pipe'] });
+    const killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 10_000);
+    child.stderr.on('data', (c) => { stderr += String(c); });
+    child.on('error', (e) => { clearTimeout(killTimer); reject(e); });
+    child.on('exit', (code) => { clearTimeout(killTimer); resolve({ code, stderr }); });
   })));
-  assert.deepEqual(procCodes, [0, 0, 0, 0], '4 concurrent OS processes MUST all reclaim dead .lock + dead .reap + dead .claim cleanly');
+  assert.deepEqual(procResults.map((r) => r.code), [0, 0, 0, 0], `4 concurrent OS processes MUST all succeed: ${JSON.stringify(procResults)}`);
   const leftovers = fs.readdirSync(authLockDir).filter((f) => f.includes('.lock'));
   assert.deepEqual(leftovers, [], 'no stale .lock/.reap/.claim files may remain after multi-process recovery');
 
