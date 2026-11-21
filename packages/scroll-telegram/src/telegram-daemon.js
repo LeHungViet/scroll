@@ -326,7 +326,7 @@ export async function createTelegramFleetDaemon(config = {}, {
       return;
     }
     if (/^\/clear(?:@[A-Za-z0-9_]+)?\b/i.test(rawText)) {
-      bot.runtime.clearSession(chatId);
+      await bot.runtime.clearSession(chatId);
       await bot.api.sendMessage({ chatId, text: 'Session history cleared.', replyToMessageId: msg.message_id });
       return;
     }

@@ -129,20 +129,29 @@ export function createTelegramApi({
     async sendLocalFile({ chatId, filePath, kind = 'document', caption = null, replyToMessageId = null, allowedRoots = null } = {}) {
       const abs = path.resolve(String(filePath || ''));
       if (!fs.existsSync(abs)) throw new Error(`local_file_not_found:${abs}`);
-      const real = fs.realpathSync(abs);
-      if (Array.isArray(allowedRoots) && allowedRoots.length) {
-        const permitted = allowedRoots.some((root) => {
-          const rr = fs.existsSync(root) ? fs.realpathSync(root) : path.resolve(root);
+      const real = fs.realpathSync.native ? fs.realpathSync.native(abs) : fs.realpathSync(abs);
+      // Fail-closed: if caller supplies an allowedRoots array (even empty `[]`!), require explicit containment!
+      if (Array.isArray(allowedRoots)) {
+        const permitted = allowedRoots.length > 0 && allowedRoots.some((root) => {
+          if (!root) return false;
+          const rr = fs.existsSync(root)
+            ? (fs.realpathSync.native ? fs.realpathSync.native(root) : fs.realpathSync(root))
+            : path.resolve(root);
           return real === rr || real.startsWith(rr + path.sep);
         });
         if (!permitted) throw new Error(`local_file_outside_allowed_roots:${path.basename(abs)}`);
       }
-      // Block symlink swap via O_NOFOLLOW when reading the validated real path
+      // Block symlink swap via O_NOFOLLOW + post-open dev/ino verification against realpath
       const fd = fs.openSync(real, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
       let buf;
       try {
         const st = fs.fstatSync(fd);
         if (!st.isFile()) throw new Error(`local_path_not_a_file:${path.basename(real)}`);
+        const postReal = fs.realpathSync.native ? fs.realpathSync.native(abs) : fs.realpathSync(abs);
+        const postSt = fs.statSync(postReal);
+        if (postReal !== real || postSt.dev !== st.dev || postSt.ino !== st.ino) {
+          throw new Error(`local_file_symlink_race:${path.basename(abs)}`);
+        }
         buf = fs.readFileSync(fd);
       } finally {
         fs.closeSync(fd);

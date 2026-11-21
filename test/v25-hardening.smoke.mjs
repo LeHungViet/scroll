@@ -11,6 +11,7 @@ import {
   createToolRegistry,
   createChatSessionRuntime,
   createApprovalStore,
+  hashArgs,
   createAuditChain,
   verifyAuditChain,
   redactTelemetry,
@@ -25,6 +26,7 @@ import {
   sanitizeGeminiSchema,
   pruneOldToolResults,
   verifyAndPinTools,
+  createMcpManager,
   createMcpStdioClient,
   policyForTier,
   runChecks,
@@ -558,6 +560,211 @@ await t('Codex & DeepSeek Parity + P1s: reasoning_content replay, max_completion
   fs.writeFileSync(path.join(dir, 'agents', 'dsbot', 'memory', 'lessons.md'), '# Tampered\n');
   const v2 = verifyAgainstRecord(dir, auditRepo(dir));
   assert.equal(v2.ok, false, 'audit --verify MUST detect new/modified memory/lessons.md');
+});
+
+// ── Round-2 Hardening Regression Gate (R2-P0-1..R2-P0-4 + P1s) ───────────────
+await t('R2-P0-1..R2-P0-4 + P1s: voiceMeta hold, appendHistory single tool result, MCP pre-spawn/quarantine, exec policy, & schema/IPv6/audit', async () => {
+  const dir = path.join(tmpRoot, 'r2-gate');
+  fs.mkdirSync(dir, { recursive: true });
+  scaffold('r2bot', dir);
+  fs.writeFileSync(path.join(dir, 'USER.md'), VALID_USER_MD);
+
+  // 1. R2-P0-1: Grounding failure MUST clear voiceMeta.bubblePlans & editPlan (no leak to channel daemon!)
+  const heldProv = pickProvider('mock', {
+    scriptedTurns: [() => ({ text: 'Promo code VIP is $199 today!' })],
+  });
+  const rtHeld = createChatSessionRuntime({
+    agentName: 'r2bot',
+    cwd: dir,
+    stateDir: path.join(dir, 'state-held'),
+    provider: heldProv,
+    voiceHooks: {
+      shapeOutgoing: ({ rawText }) => ({
+        text: rawText,
+        bubbles: [rawText],
+        meta: { bubblePlans: [{ text: rawText, typingMs: 0, pauseMs: 0 }], editPlan: { mode: 'send_then_edit', editedText: rawText } },
+      }),
+    },
+  });
+  try {
+    const res = await rtHeld.sendTurn({
+      conversationId: 'ext-held',
+      text: 'Price?',
+      sender: { channelId: 'tg:9999', name: 'Guest' },
+    });
+    assert.equal(res.streamHeld, true);
+    assert.equal(res.voiceMeta?.bubblePlans, undefined, 'held turn MUST clear voiceMeta.bubblePlans');
+    assert.equal(res.voiceMeta?.editPlan, undefined, 'held turn MUST clear voiceMeta.editPlan');
+    assert.ok(!res.rawText.includes('$199'), 'held result rawText must not leak ungrounded claim');
+  } finally {
+    rtHeld.close();
+  }
+
+  // 2. R2-P0-3: Normal tool turn MUST record EXACTLY ONE tool result per toolCallId (zero fake interrupted_before_tool_result!)
+  const toolReg = createToolRegistry({ cwd: dir });
+  toolReg.register({
+    name: 'echo_probe',
+    description: 'Echoes input',
+    risk: 'read_only',
+    parameters: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] },
+    execute: async (a) => ({ echoed: a.q }),
+  });
+  const toolProv = pickProvider('mock', {
+    scriptedTurns: [
+      () => ({ text: '', toolCalls: [{ id: 'tc-exact-1', name: 'echo_probe', arguments: { q: 'hello' } }] }),
+      () => ({ text: 'Echo finished cleanly.' }),
+    ],
+  });
+  const rtTool = createChatSessionRuntime({
+    agentName: 'r2bot',
+    cwd: dir,
+    stateDir: path.join(dir, 'state-tool'),
+    provider: toolProv,
+    tools: toolReg,
+  });
+  try {
+    await rtTool.sendTurn({
+      conversationId: 'conv-tool-once',
+      text: 'Echo hello',
+      sender: { channelId: 'tg:1001', name: 'Boss' },
+    });
+    const hist = rtTool.getHistory('conv-tool-once');
+    const toolMsgs = hist.filter((m) => m.role === 'tool' && m.toolCallId === 'tc-exact-1');
+    assert.equal(toolMsgs.length, 1, 'normal tool turn MUST persist exactly 1 tool result, never duplicate synthetic orphan');
+    assert.ok(!toolMsgs[0].content.includes('interrupted_before_tool_result'));
+    const sessDir = path.join(dir, 'state-tool', 'sessions', 'r2bot');
+    const jsonlFiles = fs.readdirSync(sessDir).filter((f) => f.endsWith('.jsonl'));
+    assert.equal(jsonlFiles.length, 1);
+    const diskRows = fs.readFileSync(path.join(sessDir, jsonlFiles[0]), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.equal(diskRows.filter((m) => m.role === 'tool' && m.toolCallId === 'tc-exact-1').length, 1, 'disk JSONL must also have exactly 1 tool result');
+
+    // P1: forkSession(same, same) MUST throw instead of truncating source in place
+    assert.throws(() => rtTool.forkSession('conv-tool-once', 'conv-tool-once'), /must differ/);
+  } finally {
+    rtTool.close();
+  }
+
+  // 3. R2-P0-4: evaluateExecPolicy rejects `./git status` for bare allow rule `["git", "status"]` + catches `-r -f` & `-fr`
+  assert.equal(evaluateExecPolicy({ command: './git', args: ['status'], allowRules: [['git', 'status']] }).ok, false);
+  assert.equal(evaluateExecPolicy({ command: '/tmp/git', args: ['status'], allowRules: [['git', 'status']] }).ok, false);
+  assert.equal(evaluateExecPolicy({ command: 'git', args: ['status'], allowRules: [['git', 'status']] }).ok, true);
+  assert.equal(evaluateExecPolicy({ command: 'rm', args: ['-r', '-f', 'tmp'], denyRules: [['rm', '-rf']] }).ok, false);
+  assert.equal(evaluateExecPolicy({ command: 'rm', args: ['-fr', 'tmp'], denyRules: [['rm', '-rf']] }).ok, false);
+
+  // Seatbelt allowNetwork: true MUST emit `(allow network-outbound (remote ip))`, NEVER `(allow network*)`
+  const netSbpl = buildSeatbeltProfile({ cwd: dir, command: '/bin/echo', allowNetwork: true });
+  assert.ok(netSbpl.includes('(allow network-outbound (remote ip))'));
+  assert.ok(!netSbpl.includes('(allow network*)'));
+
+  // 4. R2-P0-2: MCP pre-spawn cmdHash check refuses spawning altered stdio command + blocks new tool on locked server + blocks quarantined callTool
+  const mcpDir = path.join(tmpRoot, 'r2-mcp');
+  fs.mkdirSync(path.join(mcpDir, '.scroll'), { recursive: true });
+  const markerFile = path.join(mcpDir, 'SHOULD_NOT_SPAWN.txt');
+  const evilScript = path.join(mcpDir, 'evil.mjs');
+  fs.writeFileSync(evilScript, `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(markerFile)}, 'SPAWNED');\n`);
+  fs.writeFileSync(path.join(mcpDir, '.mcp.json'), JSON.stringify({
+    mcpServers: {
+      pinnedSrv: { command: process.execPath, args: [evilScript] },
+    },
+  }));
+  fs.writeFileSync(path.join(mcpDir, '.scroll', 'mcp.lock.json'), JSON.stringify({
+    version: 1,
+    tools: {
+      'mcp.pinnedSrv.ping': {
+        server: 'pinnedSrv',
+        cmdHash: '0000000000000000',
+        tool: 'ping',
+        schemaHash: 'aaaa',
+        descHash: 'bbbb',
+      },
+    },
+  }));
+  const mcpMgr = createMcpManager({ cwd: mcpDir, enforceLock: true, autoPinLock: true });
+  await mcpMgr.connectAll();
+  assert.equal(fs.existsSync(markerFile), false, 'altered stdio MCP server MUST NOT be spawned before cmdHash verification!');
+  assert.ok(mcpMgr.getFailedServers().some((e) => e.server === 'pinnedSrv' && e.error.includes('mcp_server_command_drifted_asi04')));
+  // Already-pinned server injecting a new tool name MUST be quarantined even when autoPin=true
+  const pinRes = verifyAndPinTools([
+    { server: 'pinnedSrv', name: 'injected_v2', fullName: 'mcp.pinnedSrv.injected_v2', cmdHash: '0000000000000000', description: 'new', parameters: {} },
+  ], { cwd: mcpDir, autoPin: true });
+  assert.equal(pinRes.approved.length, 0);
+  assert.equal(pinRes.quarantined.length, 1);
+  assert.equal(pinRes.quarantined[0].reason, 'mcp_unpinned_tool_on_locked_server');
+
+  // 5. P1s: sanitizeGeminiSchema union/const/$ref/dangling-required + IPv6 canonical forms + approvalStore strict bindings & inline single-use
+  const gSchema = sanitizeGeminiSchema({
+    type: 'object',
+    $defs: { x: { type: 'string' } },
+    properties: {
+      mode: { const: 'fast' },
+      note: { type: ['string', 'null'], $ref: '#/$defs/x' },
+    },
+    required: ['mode', 'nonexistent_prop'],
+  });
+  assert.deepEqual(gSchema.properties.mode.enum, ['fast']);
+  assert.equal(gSchema.properties.note.type, 'string');
+  assert.equal(gSchema.properties.note.nullable, true);
+  assert.equal(gSchema.properties.note.$ref, undefined);
+  assert.equal(gSchema.$defs, undefined);
+  assert.deepEqual(gSchema.required, ['mode']);
+
+  assert.equal(isPrivateIp('0:0:0:0:0:ffff:7f00:1'), true, 'expanded IPv4-mapped IPv6 MUST be blocked');
+  assert.equal(isPrivateIp('::ffff:0:7f00:1'), true, 'IPv4-translated IPv6 MUST be blocked');
+  assert.equal(isPrivateIp('100::1'), true, 'RFC 6666 discard prefix MUST be blocked');
+
+  const apStore = createApprovalStore({ dir: path.join(dir, 'ap-strict') });
+  const strictTok = apStore.issue({ tool: 'pay', args: { x: 1 }, approver: 'boss', conversationId: 'conv-A', turnId: 'turn-1', schemaHash: 'sh-1' });
+  assert.equal(apStore.consume({ tokenId: strictTok.id, tool: 'pay', args: { x: 1 } }).ok, false, 'omitted conversationId/turnId/schemaHash MUST fail');
+  assert.equal(apStore.consume({ tokenId: '../escape', tool: 'pay', args: { x: 1 } }).ok, false, 'malformed tokenId MUST fail');
+  assert.equal(apStore.consume({ tokenId: strictTok.id, tool: 'pay', args: { x: 1 }, conversationId: 'conv-A', turnId: 'turn-1', schemaHash: 'sh-1' }).ok, true);
+
+  // Single-use inline approval latch blocks 2 identical calls in the same turn
+  const inlineState = { used: false };
+  const inlineReg = createToolRegistry({ cwd: dir });
+  let ranCount = 0;
+  inlineReg.register({
+    name: 'check_once',
+    description: 'Read-only confirm probe',
+    risk: 'read_only',
+    parameters: { type: 'object', properties: {} },
+    execute: async () => ({ done: true }),
+  });
+  inlineReg.register({
+    name: 'danger_once',
+    description: 'Danger once',
+    risk: 'destructive',
+    ground: ['id'],
+    confirm: { probe: 'check_once', expect: '$.done' },
+    parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+    execute: async () => ({ count: ++ranCount }),
+  });
+  const argsHash = hashArgs({ id: 'ORD-1' });
+  const rOnce1 = await inlineReg.executeTool('danger_once', { id: 'ORD-1' }, {
+    approved: true, approvedTool: 'danger_once', approvedArgsHash: argsHash, approver: 'tg:1001', inlineApprovalState: inlineState,
+    trustedGroundingSources: 'ORD-1',
+  });
+  const rOnce2 = await inlineReg.executeTool('danger_once', { id: 'ORD-1' }, {
+    approved: true, approvedTool: 'danger_once', approvedArgsHash: argsHash, approver: 'tg:1001', inlineApprovalState: inlineState,
+    trustedGroundingSources: 'ORD-1',
+  });
+  assert.equal(rOnce1.ok, true);
+  assert.equal(rOnce2.ok, false);
+  assert.equal(rOnce2.reason, 'approval_already_used');
+  assert.equal(ranCount, 1);
+
+  // P1: audit --verify MUST catch deleted agent
+  const audDir = path.join(tmpRoot, 'r2-audit-del');
+  fs.mkdirSync(audDir, { recursive: true });
+  scaffold('keepbot', audDir);
+  scaffold('delbot', audDir);
+  const audBefore = auditRepo(audDir);
+  assert.equal(audBefore.verdict, 'pass');
+  fs.mkdirSync(path.join(audDir, '.scroll'), { recursive: true });
+  fs.writeFileSync(path.join(audDir, '.scroll', 'audit.json'), JSON.stringify(audBefore, null, 2));
+  fs.rmSync(path.join(audDir, 'agents', 'delbot'), { recursive: true, force: true });
+  const audCheck = verifyAgainstRecord(audDir, auditRepo(audDir));
+  assert.equal(audCheck.ok, false, 'audit --verify MUST detect deleted agent');
+  assert.ok(audCheck.reason.includes('delbot (deleted)'));
 });
 
 fs.rmSync(tmpRoot, { recursive: true, force: true });
