@@ -532,6 +532,31 @@ async function run() {
     assert.ok(tpl.startsWith('https://calendar.google.com/calendar/render?action=TEMPLATE'));
     assert.ok(!decodeURIComponent(tpl).includes('https://phish.com'));
     assert.ok(!decodeURIComponent(tpl).includes('evil.xyz/call'));
+
+    // PROVIDER_INBOX_PINNED (connector without raw headers) is clamped <= P1 (never P0, never night break-glass)
+    const dirConn = tmpDir();
+    const lConn = createAlertLedger({
+      stateDir: dirConn,
+      shadowMode: false,
+      pinnedDomains: ['vercel.com'],
+      clock: () => NIGHT_0230,
+    });
+    const connAlert = lConn.ingestSignal({
+      signalId: 'conn_1',
+      source: 'gmail',
+      isEmail: true,
+      trustedConnectorInbox: true,
+      fromDomain: 'vercel.com',
+      category: 'security_critical',
+      stage: 'security_alert',
+      confidence: 0.99,
+      summary: 'Security alert on Vercel account',
+      occurredAt: NIGHT_0230,
+      observedAt: NIGHT_0230,
+    });
+    assert.equal(connAlert.case.authGrade, 'PROVIDER_INBOX_PINNED');
+    assert.equal(connAlert.case.severity, 'P1', 'connector-only pinned email must clamp at <= P1 (never P0)');
+    assert.equal(connAlert.decision.disposition, 'hold', 'connector-only P1 must NEVER break quiet hours');
   });
 
   // ── T7: 1-Tap HITL Action (§21 tap-time token + argsHash + §28 confirmEffect + Undo + Shadow) ──
