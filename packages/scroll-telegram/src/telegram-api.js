@@ -126,16 +126,33 @@ export function createTelegramApi({
         ...(caption ? { caption } : {}),
         ...(replyToMessageId ? { reply_parameters: { message_id: Number(replyToMessageId), allow_sending_without_reply: true } } : {}),
       }),
-    async sendLocalFile({ chatId, filePath, kind = 'document', caption = null, replyToMessageId = null } = {}) {
+    async sendLocalFile({ chatId, filePath, kind = 'document', caption = null, replyToMessageId = null, allowedRoots = null } = {}) {
       const abs = path.resolve(String(filePath || ''));
       if (!fs.existsSync(abs)) throw new Error(`local_file_not_found:${abs}`);
-      const isPhoto = kind === 'photo' || /\.(?:png|jpe?g|webp|gif)$/i.test(abs);
+      const real = fs.realpathSync(abs);
+      if (Array.isArray(allowedRoots) && allowedRoots.length) {
+        const permitted = allowedRoots.some((root) => {
+          const rr = fs.existsSync(root) ? fs.realpathSync(root) : path.resolve(root);
+          return real === rr || real.startsWith(rr + path.sep);
+        });
+        if (!permitted) throw new Error(`local_file_outside_allowed_roots:${path.basename(abs)}`);
+      }
+      // Block symlink swap via O_NOFOLLOW when reading the validated real path
+      const fd = fs.openSync(real, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+      let buf;
+      try {
+        const st = fs.fstatSync(fd);
+        if (!st.isFile()) throw new Error(`local_path_not_a_file:${path.basename(real)}`);
+        buf = fs.readFileSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      const isPhoto = kind === 'photo' || /\.(?:png|jpe?g|webp|gif)$/i.test(real);
       const method = isPhoto ? 'sendPhoto' : 'sendDocument';
       const field = isPhoto ? 'photo' : 'document';
-      const buf = fs.readFileSync(abs);
       const form = new FormData();
       form.append('chat_id', String(chatId));
-      form.append(field, new Blob([buf]), path.basename(abs));
+      form.append(field, new Blob([buf]), path.basename(real));
       if (caption) form.append('caption', String(caption).slice(0, 1024));
       if (replyToMessageId) {
         form.append('reply_parameters', JSON.stringify({ message_id: Number(replyToMessageId), allow_sending_without_reply: true }));

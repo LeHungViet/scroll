@@ -266,11 +266,12 @@ await t('Mutation self-test: external turn CANNOT invoke write/destructive tools
   });
   assert.equal(blocked.ok, false);
   assert.equal(blocked.reason, 'boundary_wall_write_tools_blocked');
-  // Mutation proof: flipping writeToolsAllowed to true permits execution when approved & grounded
-  const allowed = await tools.executeTool('exec', { command: process.execPath, args: ['-e', 'console.log("ok")'] }, {
+  // Mutation proof: flipping writeToolsAllowed to true permits execution when explicitly approved & grounded
+  const execArgs = { command: process.execPath, args: ['-e', 'console.log("ok")'] };
+  const allowed = await tools.executeTool('exec', execArgs, {
     turnClassification: { writeToolsAllowed: true },
-    approved: true,
-    groundingSources: process.execPath,
+    requestApproval: async () => ({ approved: true, approver: 'owner' }),
+    groundingSources: `${process.execPath} -e console.log("ok")`,
   });
   assert.equal(allowed.ok, true);
   assert.match(allowed.output.stdout, /ok/);

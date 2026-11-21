@@ -78,7 +78,8 @@ export function createChatSessionRuntime(opts: Record<string, unknown>): {
   sendTurn(opts?: Record<string, unknown>): Promise<ChatTurnResult>;
   abortTurn(conversationId: string): { ok: boolean };
   getHistory(conversationId: string): unknown[];
-  clearSession(conversationId: string): { ok: boolean };
+  clearSession(conversationId: string): { ok: boolean } | Promise<{ ok: boolean }>;
+  forkSession(sourceConvId: string, targetConvId: string, opts?: { atIndex?: number | null }): { ok: boolean; sourceConvId: string; targetConvId: string; turns: number };
   compactSession(conversationId: string, opts?: Record<string, unknown>): Promise<{ compacted: boolean }>;
   reload(): Record<string, unknown>;
   getCacheStats(): Record<string, unknown>;
@@ -98,8 +99,12 @@ export function createAuditChain(opts?: Record<string, unknown>): Record<string,
 export function verifyAuditChain(filePath: string): { ok: boolean; count: number; errors: unknown[] };
 export function createBudgetGovernor(opts?: Record<string, unknown>): Record<string, unknown>;
 export function createApprovalStore(opts?: Record<string, unknown>): Record<string, unknown>;
-export function acquireWriterLock(lockPath: string): { lockPath: string; pid: number; release: () => void };
-export function runSandboxedExec(opts: Record<string, unknown>): Promise<{ ok: boolean; exitCode: number | null; stdout: string; stderr: string; sandbox: string }>;
+export function acquireWriterLock(stateDir: string, opts?: { lockName?: string; owner?: string }): { acquired: boolean; lockPath?: string; token?: string; release: () => void };
+export function evaluateExecPolicy(opts: { command: string; args?: string[]; allowRules?: unknown[] | null; denyRules?: unknown[] | null }): { ok: boolean; decision: 'allow' | 'deny'; reason?: string; matchedRule?: string[] | null };
+export function pruneOldToolResults(messages: unknown[], opts?: { keepRecentToolMessages?: number; maxOldChars?: number }): { messages: unknown[]; prunedCount: number; savedChars: number };
+export function applySpillToFileLimit(output: unknown, opts?: { toolName?: string; maxChars?: number; spillDir?: string | null }): unknown;
+export function sanitizeGeminiSchema(schema: unknown): Record<string, unknown>;
+export function runSandboxedExec(opts: Record<string, unknown>): Promise<{ ok: boolean; exitCode: number | null; stdout: string; stderr: string; truncated?: boolean; sandbox: string }>;
 export function runEvals(name: string, opts?: Record<string, unknown>): Promise<Record<string, unknown>>;
 export function runChatEvals(name: string, opts?: Record<string, unknown>): Promise<Record<string, unknown>>;
 export function auditRepo(cwd?: string, opts?: Record<string, unknown>): Record<string, unknown>;

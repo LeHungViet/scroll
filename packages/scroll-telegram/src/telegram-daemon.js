@@ -395,6 +395,9 @@ export async function createTelegramFleetDaemon(config = {}, {
         delegatedTools: activeGrant ? activeGrant.allowedTools : null,
       });
       bot.stats.turns++;
+      if (turn.streamHeld) {
+        logger.warn?.(`[scroll-telegram:${bot.id}] grounding held unverified reply for chat ${chatId}`);
+      }
       const bubbles = Array.isArray(turn.bubbles) && turn.bubbles.length ? turn.bubbles : [turn.text];
       for (let i = 0; i < bubbles.length; i++) {
         const chunk = String(bubbles[i] || '').trim();
@@ -432,7 +435,7 @@ export async function createTelegramFleetDaemon(config = {}, {
         return;
       }
       const approved = decision === 'ok';
-      entry.resolve(approved, fromId);
+      entry.resolve(approved, `tg:${fromId}`);
       await bot.api.answerCallbackQuery({ callbackQueryId: cq.id, text: approved ? 'Approved' : 'Denied' });
       if (chatId && cq.message?.message_id) {
         await bot.api.editMessageText({

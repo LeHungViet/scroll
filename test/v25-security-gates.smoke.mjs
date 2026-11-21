@@ -189,8 +189,8 @@ await t('G2: OS sandbox blocks reading $HOME, writing outside cwd, strips env se
 
     const strictTools = createToolRegistry({ cwd: dir, strictExec: true, enableExec: true });
     const denied = await strictTools.executeTool('exec', { command: process.execPath, args: ['-e', 'console.log(1)'] }, {
-      approved: true,
-      groundingSources: process.execPath,
+      requestApproval: async () => ({ approved: true, approver: 'boss' }),
+      groundingSources: `${process.execPath} -e console.log(1)`,
     });
     assert.equal(denied.ok, false, 'strictExec without exec_allow must fail closed');
     assert.match(denied.error || '', /exec_disabled_strict_allowlist_required/);
@@ -382,11 +382,16 @@ await t('G5: Per-call approval tokens block replay & arg mutation, enforce canAp
     name: 'danger_bad_probe',
     description: 'Bad probe tier',
     risk: 'destructive',
+    ground: ['target'],
     confirm: { probe: 'mutating_probe', expect: { path: 'status', equals: 'ok' } },
-    parameters: { type: 'object', properties: {} },
+    parameters: { type: 'object', properties: { target: { type: 'string' } }, required: ['target'] },
     async execute() { return { ran: true }; },
   });
-  const badProbe = await tools.executeTool('danger_bad_probe', {}, { approved: true });
+  const badProbeTok = approvalStore.issue({ tool: 'danger_bad_probe', args: { target: 'item-1' }, approver: 'boss', tier: 'destructive' });
+  const badProbe = await tools.executeTool('danger_bad_probe', { target: 'item-1' }, {
+    approvalTokenId: badProbeTok.id,
+    groundingSources: 'item-1',
+  });
   assert.equal(badProbe.ok, false);
   assert.match(badProbe.error || badProbe.reason || '', /confirm_probe_must_be_read_only/);
 
