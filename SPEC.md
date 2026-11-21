@@ -996,6 +996,55 @@ Conversational voice modules (persona, affective control, human-like delivery) r
 - **Source-aware large-KB grounding:** `grounding.js` recognizes both alphanumeric and uppercase hyphenated alpha codes (`AUR-DLX`, `FDP-STD`), strips trailing backticks on Markdown inline-code URLs, excludes explicitly marked expired/invalid/trap lines from authorized pricing pools, covers hospitality/booking inventory claims, and skips false-positive holds on clock times or percentages that appear verbatim in `principalSources` (or inside explicit refusals).
 - **Verified internal caller & clean `USER.md` audit:** Verified internal turns receive a machine-generated `<verified-caller audience="internal" ...>` header; `auditPeople()` skips redundant legacy `people/` `serves`-role warnings when deployment `USER.md` is active.
 
+## §45 — Interactive multi-turn chat session runtime (v2.0)
+
+> Reference impl: `lib/chat-session.js` (`createChatSessionRuntime`) · `lib/scroll.js` (`scroll chat`) · tests `test/v20-chat-tools-mcp.smoke.mjs`.
+
+SCROLL 2.0 extends the batch `WORK.md` runner with an interactive, streaming, per-conversation **Chat Session Runtime** that enforces every SCROLL safety primitive on every live chat turn:
+
+- **Per-conversation durable transcripts & auto-compaction:** each conversation persists turns to an append-only JSONL transcript outside the agent folder (`0600`) and automatically compacts older turns into a deterministic (or caller-summarized) summary record when context crosses `compactAtChars`.
+- **Per-turn SCROLL enforcement:** every turn runs `classifyTurn` (§42 boundary & group lowest-trust wall), subject memory snapshot (§31–§33, gated to `principal_and_team`), `retrieveKnowledge` (§44), Voice Hook 1 (`beforeTurn`, rejecting bare numeric sliders per §43), live multi-round tool calls (§47), `groundReply` (§43–§44), `enforceStyle` (§43), and Voice Hook 2 (`shapeOutgoing`, verified by `verifyClaimsInvariant` so voice shaping can never mutate amounts, codes, dates, or links).
+- **Hot-reload & interrupt:** `reload()` refreshes `IDENTITY.md`, `SOUL.md`, `hard-rules.md`, `USER.md`, and `knowledge/` live without restarting the host process; `abortTurn(conversationId)` interrupts an in-flight turn cleanly via `AbortController`.
+
+## §46 — Unified AuthProvider & persistent Codex App-Server client (v2.0)
+
+> Reference impl: `lib/auth.js` (`createPkceChallenge` · `buildAuthorizationUrl` · `exchangeAuthCode` · `startDeviceAuth` · `pollDeviceToken` · `createAuthStore`) · `lib/codex-app-server.js` (`findCodexBinary` · `createCodexAppServerClient`) · `lib/providers.js` (`codex-app-server` · `openai-compatible`) · `lib/scroll.js` (`scroll auth`) · tests `test/v20-auth-provider.smoke.mjs`.
+
+- **Unified credential store (`0600`, atomic writes):** supports `oauth`, `api_key`, `proxy`, and `codex_app_server` profiles in one redacted store with automatic OAuth token refresh (`skewMs`), multi-account priority ordering, and automatic 429/401 circuit-breaker cooldown failover (`withFailover`).
+- **Standard OAuth 2.0 flows:** ships zero-dep RFC 7636 PKCE (`S256`) and RFC 8628 Device Authorization Grant helpers so web apps and headless chat bots can authenticate users without external SDKs.
+- **Persistent Codex App-Server JSON-RPC client:** keeps a single stdio `codex app-server --listen stdio://` subprocess alive for ChatGPT OAuth (`account/read`, `account/login/start`, `account/rateLimits/read`), automatic explicit model resolution via `model/list`, streaming `item/agentMessage/delta` notifications, and `turn/interrupt` on abort.
+- **OpenAI-compatible streaming provider:** supports custom `baseUrl`, `AuthStore` failover, native function calling (`tools`), vision image inputs, and SSE delta streaming.
+
+## §47 — Live multi-round tool executor & zero-dep MCP stdio client (v2.0)
+
+> Reference impl: `lib/mcp-client.js` (`loadMcpConfig` · `createMcpStdioClient` · `createMcpManager`) · `lib/tools.js` (`createToolRegistry` · `isSafePublicUrl`) · tests `test/v20-chat-tools-mcp.smoke.mjs`.
+
+- **One deterministic safety gate for all tools:** built-in tools (`read_file`, `list_dir`, `web_fetch`, `web_search`, `knowledge_search`, `memory_search`, `memory_remember`, `memory_forget`, `automations`, `spawn_worker`, `exec`) and dynamically discovered MCP stdio tools all pass through §42 boundary filtering (external/mixed-group turns are strictly `read_only`), §21 risk tier + policy matrix, §22 parameter grounding, interactive HITL approval (`requestApproval`), and §28 post-write read-back confirmation (`confirmEffect`).
+- **Hardened built-ins:** `read_file` and `list_dir` enforce workspace containment and block memory-store direct access (§31.7 I-01); `web_fetch` blocks localhost, RFC1918, link-local, CGNAT, and cloud metadata IPs before and after redirects.
+- **Zero-dep MCP stdio client:** reads `.mcp.json`, resolves `${vault:KEY}` from environment variables at runtime only, handshakes via JSON-RPC 2.0 `initialize` + `tools/list`, and registers discovered tools alongside SCROLL `risk`/`ground`/`confirm` metadata.
+
+## §48 — Multimodal attachments in chat sessions (v2.0)
+
+> Reference impl: `lib/chat-session.js` (`processAttachments`) · `lib/providers.js` · tests `test/v20-chat-tools-mcp.smoke.mjs`.
+
+- Chat turns accept structured `attachments` (`image`, `audio`/`voice`, `document`/`file`).
+- Images are forwarded directly to multimodal providers (URL, base64 data URI, or local image path); audio/voice notes pass through pluggable `multimodalHooks.transcribeAudio`; documents pass through `multimodalHooks.extractDocument` or bounded UTF-8 extraction.
+
+## §49 — Timezone-aware cron, heartbeat & reminder scheduler (v2.0)
+
+> Reference impl: `lib/scheduler.js` (`parseCron` · `zonedParts` · `matchesCron` · `canManageJob` · `createScheduler`) · `lib/scroll.js` (`scroll cron`) · tests `test/v20-scheduler-workers.smoke.mjs`.
+
+- Pure Node `Intl.DateTimeFormat` 5-field cron evaluation in any IANA timezone (e.g. `Asia/Ho_Chi_Minh`), plus interval (`everyMs`) and one-shot (`at`) reminders, persisted atomically (`0600`).
+- Enforces single-fire-per-minute deduplication, exponential retry backoff on transient/429 errors, per-job `maxDailyRuns` budget caps, and a global `paused` kill-switch.
+- **Owner DM authority (`canManageJob`):** a verified internal `owner`/`admin` in a direct message is authorized to inspect, toggle, edit, or delete scheduled jobs targeting any group chat.
+
+## §50 — Async background workers & hybrid memory search (v2.0)
+
+> Reference impl: `lib/chat-session.js` (`createWorkerPool`) · `lib/memory.js` (`searchHybrid` · `consolidateDigest`) · tests `test/v20-scheduler-workers.smoke.mjs`.
+
+- **Non-blocking worker pool:** `createWorkerPool` bounds concurrent background jobs (`maxConcurrent`), supports cancellation via `AbortController`, and invokes `onComplete` so long-running tasks never block live chat turns.
+- **Hybrid semantic + lexical memory search:** `memoryStore.searchHybrid(sid, { query, embed, semanticWeight })` combines optional caller-supplied vector embeddings (cosine similarity) with SCROLL's deterministic lexical scan while preserving every §31–§33 access-ledger and isolation guarantee; `consolidateDigest()` yields a bounded deterministic fact digest.
+
 ---
 
 ## Design note — §28–30 and the failure they answer

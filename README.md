@@ -12,7 +12,7 @@ scroll run  researcher --task "…"     # inner loop: one harnessed run — capp
 scroll loop LOOP.md                   # outer loop: schedule + find work + stop conditions
 ```
 
-`MIT` · `Node ≥ 20` · **Spec v1.9** · **`@agentpro/scroll` 0.14.0** · vendor-neutral — runs on Claude · OpenAI/Codex · Gemini · Grok
+`MIT` · `Node >= 20` · **Spec v2.0** · **`@agentpro/scroll` 2.0.0** · vendor-neutral -- runs on Claude · OpenAI/Codex · Gemini · Grok
 
 > **GitHub topics:** `loop-engineering` · `agent-harness` · `agentic` · `agentic-loops` · `ai-agents` · `autonomous-agents` · `llm` · `mcp`
 
@@ -43,9 +43,13 @@ The thesis in one line: **SCROLL doesn't try to make the model smarter — it ma
 
 ---
 
-## Implementation status (2026-11-19 · v1.9)
+## Implementation status (2026-11-21 · v2.0)
 
-**Built & tested** (`test/` — **158 checks green**: 10 core + 14 runtime + 16 v1.4 + 6 v1.5 + 10 v1.6 + 36 v1.7 + 24 v1.8 + 17 v1.9 + 11 installers + 7 audit + 7 team-code):
+- **§45–§50 Interactive Chat Runtime, Unified Auth, Live Tools/MCP, Multimodal, Timezone Scheduler & Async Workers (v2.0)** — `lib/chat-session.js` (`scroll chat`), `lib/auth.js` (`scroll auth` — OAuth 2.0 PKCE, Device Flow, multi-account 429 failover), `lib/codex-app-server.js` (persistent JSON-RPC stdio client for ChatGPT OAuth & streaming), `lib/mcp-client.js` & `lib/tools.js` (live multi-round tool calls & zero-dep MCP stdio client behind §21/§22/§28/§42 gates), `lib/scheduler.js` (`scroll cron` — IANA timezone cron, owner DM authority, kill-switch & budget cap), `createWorkerPool`, and `memoryStore.searchHybrid`.
+- **§44 Large deployment knowledge retrieval & source-aware grounding (v1.10)** — deterministic BM25 + heading + bigram + code retrieval over `knowledge/`, conversational deliverable mode, and source-aware grounding.
+- **§42–§43 Per-turn internal/external boundary, group wall, `style:` & Voice hooks (v1.9)** — verified-ID audience classifier, group lowest-trust content wall, machine-enforced `style:` block, official Voice plugin hooks with claims-invariant protection.
+
+**Built & tested** (`npm test` runs all 19 smoke & unit suites with mutation self-tests):
 
 - **§38–41 People in the agent team** — every person gets a **card** (`people/<slug>.md`) they write themselves: how to address them, their roles, what they may approve, which channels reach them, and a short note capped by code. Cards live **outside** `agents/`, so an agent folder stays shareable. Agents bind to **roles** (`serves: [owner]`); the deployment maps roles to people, and every agent of the team — sub-agents included — loads the same card into its cached prefix, so changing how a person is addressed is one edit, not one per agent. A person can **own a step** in `WORK.md`: the run asks them, stops there, and resumes when they (and only they) mark it done. An approval **names its approver**, and the runner checks that person's card — action class, amount, the deployment's ceiling — before the gate opens; every decision goes to a hash-chained audit trail. `scroll audit` fails when a card, a `USER.md` or a `people/` folder travels inside an agent folder, a skill or a plugin. Agents never edit cards: they propose, and the person decides. The suite plants seventeen bugs in the people and runtime code and fails unless each is caught.
 
