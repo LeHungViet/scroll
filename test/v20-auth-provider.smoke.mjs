@@ -215,12 +215,20 @@ rl.on('line', (line) => {
       setTimeout(() => {}, 10000);
       return;
     }
+    if (txt.includes('CALL_DYN_TOOL')) {
+      send({ jsonrpc: '2.0', id: 9001, method: 'item/tool/call', params: { threadId: msg.params.threadId, turnId: tid, callId: 'c-1', namespace: null, tool: 'lookup_code', arguments: { q: 'alpha' } } });
+      return;
+    }
     setTimeout(() => {
       send({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId: msg.params.threadId, delta: 'Hello ' } });
       send({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId: msg.params.threadId, delta: 'world!' } });
       send({ jsonrpc: '2.0', method: 'thread/tokenUsage/updated', params: { threadId: msg.params.threadId, tokenUsage: { last: { inputTokens: 120, cachedInputTokens: 40, outputTokens: 12, totalTokens: 132 } } } });
       send({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: msg.params.threadId, turn: { id: tid, status: 'completed' } } });
     }, 15);
+  } else if (msg.id === 9001 && msg.result) {
+    const out = msg.result.contentItems?.[0]?.text || '';
+    send({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId: 'thr-001', delta: 'ToolSaid:' + out } });
+    send({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'thr-001', turn: { id: 'turn-' + turnSeq, status: 'completed' } } });
   } else if (msg.method === 'turn/interrupt') {
     send({ jsonrpc: '2.0', id: msg.id, result: { interrupted: true } });
   }
@@ -249,6 +257,18 @@ rl.on('line', (line) => {
     assert.equal(res.model, 'gpt-6.1-terra'); // auto-resolved from model/list!
     assert.equal(res.usage.cachedInputTokens, 40);
     assert.equal(res.usage.uncachedInputTokens, 80);
+
+    // Bidirectional dynamicTools + item/tool/call RPC works end-to-end
+    const dynCalls = [];
+    const dynRes = await provider.generate('CALL_DYN_TOOL', {
+      tools: [{ name: 'lookup_code', description: 'Lookup code', parameters: { type: 'object', properties: { q: { type: 'string' } } } }],
+      onToolCall: async ({ tool, arguments: a }) => {
+        dynCalls.push({ tool, a });
+        return { ok: true, text: 'CODE-777' };
+      },
+    });
+    assert.deepEqual(dynCalls, [{ tool: 'lookup_code', a: { q: 'alpha' } }]);
+    assert.equal(dynRes.text, 'ToolSaid:CODE-777');
 
     // AbortSignal interrupts slow turn cleanly
     const ac = new AbortController();
