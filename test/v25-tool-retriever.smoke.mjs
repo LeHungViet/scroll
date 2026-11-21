@@ -379,6 +379,21 @@ await t('G7b: codex-app-server keeps moderate toolsets (<=60 tools) in direct mo
   assert.ok(codexSurface.activeSchemas.some((s) => s.name === 'ext_tool_0'), 'ext_tool_0 must be directly exposed to codex-app-server');
   assert.ok(codexSurface.activeSchemas.some((s) => s.name === 'ext_tool_23'), 'ext_tool_23 must be directly exposed to codex-app-server');
 
+  // Provider capability flag `nativeToolManager` drives Code-Mode direct exposure without hardcoding vendor names
+  assert.equal(pickProvider('codex-app-server').nativeToolManager, true);
+  assert.equal(pickProvider('claude').nativeToolManager, true);
+  assert.equal(pickProvider('grok').nativeToolManager, true);
+  assert.equal(pickProvider('openai').nativeToolManager, false);
+  assert.equal(pickProvider('anthropic').nativeToolManager, false);
+  assert.equal(pickProvider('gemini').nativeToolManager, false);
+
+  const customHarnessDirect = tools.getPromptSurface({ allowWriteTools: true, providerName: 'custom-agent-sdk', nativeToolManager: true });
+  assert.equal(customHarnessDirect.mode, 'direct', 'any provider with nativeToolManager: true must get direct exposure for <=60 tools');
+  assert.ok(customHarnessDirect.activeSchemas.some((s) => s.name === 'ext_tool_0'));
+
+  const explicitFalseDefer = tools.getPromptSurface({ allowWriteTools: true, providerName: 'codex-app-server', nativeToolManager: false });
+  assert.equal(explicitFalseDefer.mode, 'portable', 'explicit nativeToolManager: false must use standard deferral threshold');
+
   // Explicit mode: 'portable' MUST still override auto behavior even on codex-app-server
   const forcedPortable = tools.getPromptSurface({ allowWriteTools: true, providerName: 'codex-app-server', mode: 'portable' });
   assert.equal(forcedPortable.mode, 'portable');

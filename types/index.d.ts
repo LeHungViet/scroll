@@ -32,6 +32,7 @@ export interface ScrollProvider {
   model: string;
   ready: boolean;
   supportsTools?: boolean;
+  nativeToolManager?: boolean;
   missing: string | null;
   generate(prompt: string, opts?: Record<string, unknown>): Promise<ProviderResponse>;
   close?: () => Promise<void>;
