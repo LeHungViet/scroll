@@ -819,6 +819,18 @@ await t('R2-P0-1..R2-P0-4 + P1s: voiceMeta hold, appendHistory single tool resul
       refPruned: {
         anyOf: [{ type: 'string' }, { $ref: '#/$defs/Ignored' }],
       },
+      scalarWithRefPruned: {
+        type: 'string',
+        anyOf: [{ enum: ['A'] }, { $ref: '#/$defs/X' }],
+      },
+      nestedOptionalUnion: {
+        anyOf: [{ anyOf: [{ type: 'string' }, { type: 'number' }] }, { type: 'null' }],
+      },
+      nestedObjAnyOf: {
+        type: 'object',
+        properties: { a: { type: 'string' }, b: { type: 'string' } },
+        anyOf: [{ required: ['a'] }, { required: ['b'] }],
+      },
     },
   });
   assert.equal(gPydantic.properties.opt.type, 'string');
@@ -834,6 +846,29 @@ await t('R2-P0-1..R2-P0-4 + P1s: voiceMeta hold, appendHistory single tool resul
   assert.deepEqual(gPydantic.properties.scalarTypeWithAnyOf.anyOf, [{ type: 'string', enum: ['A'] }, { type: 'string', minLength: 5 }]);
   assert.equal(gPydantic.properties.refPruned.type, 'string');
   assert.equal(gPydantic.properties.refPruned.anyOf, undefined);
+  assert.deepEqual(gPydantic.properties.scalarWithRefPruned, { type: 'string', enum: ['A'] }, 'scalar parent type MUST NOT be injected into empty $ref-only branch');
+  assert.deepEqual(gPydantic.properties.nestedOptionalUnion, { anyOf: [{ type: 'string' }, { type: 'number' }], nullable: true });
+  assert.equal(gPydantic.properties.nestedObjAnyOf.type, 'object', 'nested object schema with anyOf MUST keep type:object');
+  assert.equal(gPydantic.properties.nestedObjAnyOf.anyOf, undefined);
+
+  // Root object schemas with anyOf / oneOf MUST preserve root type:object for Gemini functionDeclarations
+  const gRootAnyOf = sanitizeGeminiSchema({
+    type: 'object',
+    properties: { a: { type: 'string' }, b: { type: 'string' } },
+    anyOf: [{ required: ['a'] }, { required: ['b'] }],
+  });
+  assert.equal(gRootAnyOf.type, 'object');
+  assert.equal(gRootAnyOf.anyOf, undefined);
+  assert.ok(gRootAnyOf.properties.a && gRootAnyOf.properties.b);
+  const gRootOneOf = sanitizeGeminiSchema({
+    type: 'object',
+    oneOf: [
+      { properties: { x: { type: 'string' } }, required: ['x'] },
+      { properties: { y: { type: 'number' } }, required: ['y'] },
+    ],
+  });
+  assert.equal(gRootOneOf.type, 'object');
+  assert.equal(gRootOneOf.anyOf, undefined);
 
   // GNU abbreviated `--recurs --forc` blocked by `rm -rf` deny rule
   const rmGnuAbbrev = evaluateExecPolicy({ command: 'rm', args: ['--recurs', '--forc', '/tmp/x'], denyRules: [['rm', '-rf']] });
@@ -906,10 +941,16 @@ rl.on('line', (line) => {
   fs.writeFileSync(`${authFile}.lock.reap.tok-${deadLockTok}.claim.tok-${deadReapTok}`, JSON.stringify({ pid: 999997, token: '999997-deadclaim001', ts: Date.now() - 60_000 }) + '\n');
   const aStore = createAuthStore({ filePath: authFile });
   aStore.upsertProfile({ id: 'p1', provider: 'openai', type: 'api_key', apiKey: 'sk-test-r4' });
-  const refRes = await aStore.refreshTokenIfNeeded('p1');
-  assert.equal(refRes.profile.id, 'p1', 'withAuthFileLock MUST reclaim dead .lock + dead .reap + dead .claim cleanly');
+  // 4 concurrent waiters racing on the same triple-crash (.lock + .reap + .claim) MUST all succeed with 0 leftovers!
+  const refResults = await Promise.all([
+    aStore.refreshTokenIfNeeded('p1', { force: true }),
+    aStore.refreshTokenIfNeeded('p1', { force: true }),
+    aStore.refreshTokenIfNeeded('p1', { force: true }),
+    aStore.refreshTokenIfNeeded('p1', { force: true }),
+  ]);
+  assert.equal(refResults.every((r) => r.profile.id === 'p1'), true, 'concurrent waiters MUST reclaim dead .lock + dead .reap + dead .claim cleanly');
   const leftovers = fs.readdirSync(authLockDir).filter((f) => f.includes('.lock'));
-  assert.deepEqual(leftovers, [], 'no stale .lock/.reap/.claim/.retired files may remain after recovery');
+  assert.deepEqual(leftovers, [], 'no stale .lock/.reap/.claim files may remain after recovery');
 
   // P1: audit --verify MUST catch deleted agent
   const audDir = path.join(tmpRoot, 'r2-audit-del');
