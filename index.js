@@ -1,17 +1,33 @@
-// SCROLL 2.0 -- public programmatic API barrel.
+// SCROLL 2.5 -- Complete public programmatic API barrel.
 export * from './lib/scroll.js';
 export * from './lib/auth.js';
 export * from './lib/codex-app-server.js';
 export * from './lib/providers.js';
 export * from './lib/mcp-client.js';
 export * from './lib/tools.js';
+export * from './lib/tool-retriever.js';
+export * from './lib/sandbox.js';
+export * from './lib/vault.js';
+export * from './lib/chat-telemetry.js';
 export * from './lib/scheduler.js';
 export * from './lib/chat-session.js';
 export * from './lib/memory.js';
 export * from './lib/memory-tracker.js';
 export * from './lib/user.js';
+export * from './lib/people.js';
 export * from './lib/knowledge.js';
 export * from './lib/grounding.js';
 export * from './lib/style.js';
 export * from './lib/permissions.js';
 export * from './lib/effects.js';
+export * from './lib/skills.js';
+export * from './lib/eval.js';
+export * from './lib/audit.js';
+export * from './lib/loop.js';
+export * from './lib/runtime.js';
+export * from './lib/digest.js';
+export * from './lib/installers.js';
+export * from './lib/ledger.js';
+export * from './lib/skill-eval.js';
+// Explicit disambiguation for `parseAmount` exported by both `people.js` and `grounding.js`
+export { parseAmount } from './lib/grounding.js';

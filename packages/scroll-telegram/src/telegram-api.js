@@ -1,0 +1,154 @@
+// Zero-dependency Telegram Bot API client (Node >= 20 built-in fetch).
+// Supports custom apiBaseUrl for local mock-server E2E testing or reverse proxies.
+import fs from 'node:fs';
+import path from 'node:path';
+
+export function createTelegramApi({
+  token,
+  apiBaseUrl = 'https://api.telegram.org',
+  fetchImpl = globalThis.fetch,
+  timeoutMs = 45_000,
+} = {}) {
+  if (!token) throw new Error('createTelegramApi: token is required');
+  const base = String(apiBaseUrl).replace(/\/+$/, '');
+
+  async function call(method, payload = null, { signal = null, timeoutMs: reqTimeout = timeoutMs } = {}) {
+    const url = `${base}/bot${token}/${method}`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), reqTimeout);
+    if (typeof timer.unref === 'function') timer.unref();
+    const onExternalAbort = () => ctrl.abort();
+    if (signal) {
+      if (signal.aborted) ctrl.abort();
+      else signal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+    try {
+      const opts = {
+        method: payload ? 'POST' : 'GET',
+        signal: ctrl.signal,
+      };
+      if (payload) {
+        opts.headers = { 'Content-Type': 'application/json' };
+        opts.body = JSON.stringify(payload);
+      }
+      const res = await fetchImpl(url, opts);
+      const raw = await res.text();
+      let json;
+      try { json = JSON.parse(raw); } catch { json = { ok: false, description: raw.slice(0, 300) }; }
+      if (!res.ok || json.ok === false) {
+        const err = new Error(json.description || `telegram_${method}_http_${res.status}`);
+        err.status = res.status;
+        err.error_code = json.error_code || res.status;
+        err.description = json.description || '';
+        if (json.parameters?.retry_after) err.retryAfterMs = Number(json.parameters.retry_after) * 1000;
+        throw err;
+      }
+      return json.result;
+    } finally {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onExternalAbort);
+    }
+  }
+
+  function toInlineKeyboard(buttons) {
+    if (!Array.isArray(buttons) || !buttons.length) return undefined;
+    return { inline_keyboard: buttons };
+  }
+
+  return {
+    call,
+    getMe: (opts) => call('getMe', null, opts),
+    getUpdates: ({ offset, timeout = 25, limit = 50, allowedUpdates = ['message', 'edited_message', 'callback_query'] } = {}, opts) =>
+      call('getUpdates', {
+        ...(offset != null ? { offset } : {}),
+        timeout,
+        limit,
+        allowed_updates: allowedUpdates,
+      }, { timeoutMs: Math.max(timeoutMs, (timeout + 15) * 1000), ...(opts || {}) }),
+    sendMessage: ({ chatId, text, replyToMessageId = null, buttons = null, parseMode = null, disableNotification = false } = {}) =>
+      call('sendMessage', {
+        chat_id: chatId,
+        text: String(text || ''),
+        ...(replyToMessageId ? { reply_parameters: { message_id: Number(replyToMessageId), allow_sending_without_reply: true } } : {}),
+        ...(buttons ? { reply_markup: toInlineKeyboard(buttons) } : {}),
+        ...(parseMode ? { parse_mode: parseMode } : {}),
+        ...(disableNotification ? { disable_notification: true } : {}),
+      }),
+    editMessageText: async ({ chatId, messageId, text, buttons = null, parseMode = null } = {}) => {
+      try {
+        return await call('editMessageText', {
+          chat_id: chatId,
+          message_id: Number(messageId),
+          text: String(text || ''),
+          ...(buttons ? { reply_markup: toInlineKeyboard(buttons) } : {}),
+          ...(parseMode ? { parse_mode: parseMode } : {}),
+        });
+      } catch (err) {
+        if (err?.error_code === 400 && String(err.description || '').includes('message is not modified')) {
+          return { unchanged: true };
+        }
+        throw err;
+      }
+    },
+    sendChatAction: ({ chatId, action = 'typing' } = {}) =>
+      call('sendChatAction', { chat_id: chatId, action }).catch(() => null),
+    setMessageReaction: ({ chatId, messageId, emoji, isBig = false } = {}) =>
+      call('setMessageReaction', {
+        chat_id: chatId,
+        message_id: Number(messageId),
+        reaction: emoji ? [{ type: 'emoji', emoji }] : [],
+        is_big: Boolean(isBig),
+      }).catch(() => null),
+    answerCallbackQuery: ({ callbackQueryId, text = null, showAlert = false } = {}) =>
+      call('answerCallbackQuery', {
+        callback_query_id: String(callbackQueryId),
+        ...(text ? { text: String(text).slice(0, 180) } : {}),
+        show_alert: Boolean(showAlert),
+      }).catch(() => null),
+    getFile: (fileId) => call('getFile', { file_id: String(fileId) }),
+    async downloadFile(filePath) {
+      const url = `${base}/file/bot${token}/${String(filePath).replace(/^\/+/, '')}`;
+      const res = await fetchImpl(url);
+      if (!res.ok) throw new Error(`telegram_download_failed:${res.status}`);
+      return Buffer.from(await res.arrayBuffer());
+    },
+    sendPhoto: ({ chatId, photo, caption = null, replyToMessageId = null } = {}) =>
+      call('sendPhoto', {
+        chat_id: chatId,
+        photo,
+        ...(caption ? { caption } : {}),
+        ...(replyToMessageId ? { reply_parameters: { message_id: Number(replyToMessageId), allow_sending_without_reply: true } } : {}),
+      }),
+    sendDocument: ({ chatId, document, caption = null, replyToMessageId = null } = {}) =>
+      call('sendDocument', {
+        chat_id: chatId,
+        document,
+        ...(caption ? { caption } : {}),
+        ...(replyToMessageId ? { reply_parameters: { message_id: Number(replyToMessageId), allow_sending_without_reply: true } } : {}),
+      }),
+    async sendLocalFile({ chatId, filePath, kind = 'document', caption = null, replyToMessageId = null } = {}) {
+      const abs = path.resolve(String(filePath || ''));
+      if (!fs.existsSync(abs)) throw new Error(`local_file_not_found:${abs}`);
+      const isPhoto = kind === 'photo' || /\.(?:png|jpe?g|webp|gif)$/i.test(abs);
+      const method = isPhoto ? 'sendPhoto' : 'sendDocument';
+      const field = isPhoto ? 'photo' : 'document';
+      const buf = fs.readFileSync(abs);
+      const form = new FormData();
+      form.append('chat_id', String(chatId));
+      form.append(field, new Blob([buf]), path.basename(abs));
+      if (caption) form.append('caption', String(caption).slice(0, 1024));
+      if (replyToMessageId) {
+        form.append('reply_parameters', JSON.stringify({ message_id: Number(replyToMessageId), allow_sending_without_reply: true }));
+      }
+      const res = await fetchImpl(`${base}/bot${token}/${method}`, { method: 'POST', body: form });
+      const raw = await res.text();
+      let json;
+      try { json = JSON.parse(raw); } catch { json = { ok: false, description: raw.slice(0, 300) }; }
+      if (!res.ok || json.ok === false) {
+        throw new Error(json.description || `telegram_${method}_http_${res.status}`);
+      }
+      return json.result;
+    },
+    setMyCommands: (commands) => call('setMyCommands', { commands }),
+  };
+}

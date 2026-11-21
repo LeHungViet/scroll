@@ -1,6 +1,12 @@
 # SCROLL Specification
 
-**Version:** 1.9 · **Status:** Draft (runtime built; §28–41 implemented) · **Date:** 2026-11-19 · **Reference impl:** `@agentpro/scroll` 0.14.0
+**Version:** 2.5 · **Status:** Stable (runtime built; §28–§50 & §47.2 implemented) · **Date:** 2026-11-21 · **Reference impl:** `@agentpro/scroll` 2.5.0
+
+> **v2.5 (production chat harness, §47.2 Portable Tool Retriever & 2-package monorepo):**
+> - **Hardened Action Boundary:** `fs.realpathSync.native` + case-insensitive & dotfile deny-list (`USER.md`, `.env`, `.scroll/**`, `.mcp.json`), OS kernel sandboxing (`sandbox-exec` / `bwrap`) with minimal env allowlist for `exec` & MCP subprocesses, AES-256-GCM vault (`${vault:KEY}` fail-closed), DNS/IPv6/CGNAT `100.64.0.0/10` + manual-redirect SSRF & `egress_allow`, provenance-tagged §22 grounding (untrusted `web_fetch` cannot launder claims), buffered streaming on external grounded turns, single-use per-call approval tokens + `canApprove()`, and fail-closed read-only `confirmEffect` probes.
+> - **§47.2 Portable Tool Retriever (Zero-Dep):** 3-set architecture (deployment-frozen Catalog `C`, per-turn Visible `V`, per-call Executable `E`) with multi-field BM25F + batch `queries[]` `tool_search`, Transparent Unwrap `tool_invoke` with host JSON Schema validation, Room-Sticky group prompt-cache invariance (`<turn_speaker>` in Region C), `.scroll/mcp.lock.json` TOFU pinning, ASI04 quarantine, and `scroll check` ban on unpinned `npx …@latest`.
+> - **D16 Observability, Budget & Concurrency:** OTel GenAI-aligned `events.jsonl`, hash-chained `audit.jsonl` (`scroll audit --verify-chain`), `IDENTITY.budget` + loop/error circuit breakers, single-writer PID lock, per-conversation turn mutex, per-round JSONL crash recovery, and §34 `openSkills()` wired into live chat sessions.
+> - **4-Provider Parity & Streamable HTTP MCP:** Real SSE streaming, parallel tool calling, `thoughtSignature`/`thinking` preservation, `images`, and `authStore` failover across OpenAI, Anthropic, Gemini, and Codex App-Server (`base64` vision temp-file bridge + turn-bound RPC callbacks); Streamable HTTP MCP (`Mcp-Session-Id` + HTTP `404` re-init + `Promise.allSettled` isolation); token-aware compaction + `400 context_length_exceeded` auto-recovery; multi-turn `runChatEvals()` (`pass^k`); and lockstep 2-package monorepo (`@agentpro/scroll` with `./chat` + `@agentpro/scroll-telegram`).
 
 > **v1.9 (people in the agent team):** §38 a person card per person (`people/<slug>.md`), written by that person, outside every agent folder, with a body capped by code · §39 agents bind to people by role (`serves`, `reports_to: role:<r>`); the deployment maps roles to people and every agent of the team loads the same card · §40 a person can own a `WORK.md` step, and an approval names its approver, whose card the runner checks before the gate opens, with a hash-chained audit trail · §41 audit fails when a card, a `USER.md` or a `people/` folder travels inside an agent folder, a skill or a plugin. §3, §9, §13, §18.3 and §20.5 are updated to match; `pronoun` and `reports_to: user` remain valid as legacy.
 >
@@ -1023,7 +1029,18 @@ SCROLL 2.0 extends the batch `WORK.md` runner with an interactive, streaming, pe
 - **Hardened built-ins:** `read_file` and `list_dir` enforce workspace containment and block memory-store direct access (§31.7 I-01); `web_fetch` blocks localhost, RFC1918, link-local, CGNAT, and cloud metadata IPs before and after redirects.
 - **Zero-dep MCP stdio client:** reads `.mcp.json`, resolves `${vault:KEY}` from environment variables at runtime only, handshakes via JSON-RPC 2.0 `initialize` + `tools/list`, and registers discovered tools alongside SCROLL `risk`/`ground`/`confirm` metadata.
 
-## §48 — Multimodal attachments in chat sessions (v2.0)
+## §47.2 — Portable Tool Retriever, Room-Sticky Group Caching & ASI04 Pinning (v2.5)
+
+> Reference impl: `lib/tool-retriever.js` (`buildToolRetriever` · `buildAvailableToolsIndex` · `validateToolArgs` · `computeSchemaHash`) · `lib/tools.js` (`getPromptSurface` · `searchTools` · `executeTool` Transparent Unwrap) · `lib/mcp-client.js` (`createMcpHttpClient` · `verifyAndPinTools` · `approveMcpLock`) · `lib/scroll.js` (`checkMcpConfigPinning` · `scroll mcp diff|approve`) · tests `test/v25-tool-retriever.smoke.mjs`.
+
+- **3-Set Architecture (`C / V / E`):**
+  1. **Catalog `C` (deployment-frozen, Region A):** When registered tools exceed `defer_threshold` (default `15`) or `max_schema_bytes` (`8 KB`), only core always-loaded tools plus `tool_search` and `tool_invoke` enter provider tool schemas. Remaining tools appear in a frozen `<available_tools>` catalog capped at `<= 1,500` tokens across three adaptive density tiers (full summaries, compact groups, namespace counts).
+  2. **Visible `V` (per-turn volatile, Region C):** `tool_search` accepts single `query` or batch `queries[]`, filters strictly by the turn's speaker trust (`allowWriteTools`, `delegatedTools`, `tools_allow`), ranks via deterministic multi-field BM25F + bigrams + bilingual synonyms (+ optional `embedFn`), and records each returned tool's `schemaHash` in the session's `hydratedTools` map.
+  3. **Executable `E` (per-call Transparent Unwrap):** `tool_invoke({ name, arguments })` rejects recursion (`tool_invoke`/`tool_search`), requires prior `tool_search` hydration for deferred tools, verifies `schemaHash` against mid-session drift (ASI04), validates `arguments` against JSON Schema on the host (`validateToolArgs`), and unwraps directly into the single unified `executeTool(targetName, targetArgs, ctx)` gate (enforcing §42, §21, §22, §28, budget/loop breakers, and `audit.jsonl` under the real target tool name).
+- **Room-Sticky Group Cache Invariance:** In multi-speaker group rooms, Region A (`USER.md` rendered for room audience, safety contract, `<available_skills>`, `<available_tools>`, and tool schemas) stays byte-identical across alternating Owner, Teammate, and Guest turns (`prefixHash` variance = 0), while per-turn `<turn_speaker ... />` sanitized metadata attaches in Region C and per-speaker RBAC enforces strictly on `V` and `E`.
+- **Supply-Chain & Rug-Pull Protection (ASI04):** MCP tool descriptions are scanned via `scanText()` and quarantined on prompt injection or hidden Unicode; `.scroll/mcp.lock.json` pins `(cmdHash, schemaHash, descHash)` on first use (TOFU) and quarantines unexpected descriptor drift until explicitly approved via `scroll mcp approve`; `scroll check` and `scroll audit` ban unpinned `npx …@latest` / unversioned packages in `.mcp.json`.
+
+## §48 — Multimodal attachments in chat sessions (v2.0 / v2.5)
 
 > Reference impl: `lib/chat-session.js` (`processAttachments`) · `lib/providers.js` · tests `test/v20-chat-tools-mcp.smoke.mjs`.
 

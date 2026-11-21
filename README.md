@@ -12,9 +12,9 @@ scroll run  researcher --task "…"     # inner loop: one harnessed run — capp
 scroll loop LOOP.md                   # outer loop: schedule + find work + stop conditions
 ```
 
-`MIT` · `Node >= 20` · **Spec v2.0** · **`@agentpro/scroll` 2.0.0** · vendor-neutral -- runs on Claude · OpenAI/Codex · Gemini · Grok
+`MIT` · `Node >= 20` · **Spec v2.5** · **`@agentpro/scroll` 2.5.0** + **`@agentpro/scroll-telegram` 2.5.0** · zero runtime deps · runs on Claude · OpenAI/Codex · Gemini · Grok
 
-> **GitHub topics:** `loop-engineering` · `agent-harness` · `agentic` · `agentic-loops` · `ai-agents` · `autonomous-agents` · `llm` · `mcp`
+> **GitHub topics:** `loop-engineering` · `agent-harness` · `agentic` · `agentic-loops` · `ai-agents` · `autonomous-agents` · `tool-retriever` · `llm` · `mcp`
 
 ---
 
@@ -43,13 +43,16 @@ The thesis in one line: **SCROLL doesn't try to make the model smarter — it ma
 
 ---
 
-## Implementation status (2026-11-21 · v2.0)
+## Implementation status (2026-11-21 · v2.5)
 
-- **§45–§50 Interactive Chat Runtime, Unified Auth, Live Tools/MCP, Multimodal, Timezone Scheduler & Async Workers (v2.0)** — `lib/chat-session.js` (`scroll chat` with strict §13 stable-prefix/volatile-suffix prompt caching & Codex persistent thread reuse), `lib/memory-tracker.js` (channel-agnostic 3-axis `user` / `group` / `member` memory + L5 lessons + nightly Dream for any surface), `lib/auth.js` (`scroll auth` — OAuth 2.0 PKCE, Device Flow, multi-account 429 failover), `lib/codex-app-server.js` (persistent JSON-RPC stdio client for ChatGPT OAuth & streaming), `lib/mcp-client.js` & `lib/tools.js` (deterministically sorted schemas & zero-dep MCP stdio client behind §21/§22/§28/§42 gates), `lib/scheduler.js` (`scroll cron` — IANA timezone cron, owner DM authority, kill-switch & budget cap), `createWorkerPool`, and `memoryStore.searchHybrid`.
+- **§47.2 Portable Tool Retriever & Room-Sticky Group Cache (v2.5)** — zero-dep `lib/tool-retriever.js` (`C/V/E` 3-set architecture, multi-field BM25F + batch `queries[]`, host JSON Schema argument validator, Transparent Unwrap `tool_invoke`, `<available_tools>` capped `<= 1,500` tok compressing 226+ tools to `< 5K` tok across all 4 providers), Room-Sticky group posture (`prefixHash` 100% invariant across alternating Owner/Teammate/Guest turns), `.scroll/mcp.lock.json` TOFU pinning (`scroll mcp diff|approve`), ASI04 prompt-injection quarantine, and `scroll check` ban on `npx …@latest`.
+- **Hardened Security Boundary, OS Sandbox & D16 Production Telemetry (v2.5)** — `lib/sandbox.js` (macOS Seatbelt / Linux Bubblewrap + sanitized env allowlist), `lib/vault.js` (AES-256-GCM encrypted vault + fail-closed `${vault:KEY}`), DNS/IPv6/CGNAT `100.64.0.0/10` + manual-redirect SSRF guard + `egress_allow`, provenance-tagged §22 grounding (anti-laundering) + buffered external streaming, single-use per-call approval tokens + `canApprove()`, fail-closed read-only `confirmEffect` probes, `lib/chat-telemetry.js` (OTel GenAI `events.jsonl`, hash-chained `audit.jsonl` + `scroll audit --verify-chain`, `IDENTITY.budget` + loop/error circuit breakers, single-writer PID lock), per-conversation mutex, per-round JSONL crash recovery, and §34 `openSkills()` wired into live chat.
+- **4-Provider Parity, Streamable HTTP MCP, Compaction Recovery & Multi-Turn `pass^k` Evals (v2.5)** — real SSE streaming, parallel function calling, `thinking`/`thoughtSignature` preservation, `images`, and `authStore` failover across OpenAI, Anthropic, Gemini, and Codex App-Server (`base64` vision temp-file bridge + turn-bound RPC callbacks); Streamable HTTP MCP (`Mcp-Session-Id` + HTTP `404` re-init + `Promise.allSettled` isolation); token-aware compaction + `400 context_length_exceeded` auto-recovery; `runChatEvals()` (`scroll eval --chat --trials k`); and lockstep 2-package monorepo (`@agentpro/scroll` with `@agentpro/scroll/chat` + `@agentpro/scroll-telegram`, both `dependencies: {}`).
+- **§45–§50 Interactive Chat Runtime, Unified Auth, Live Tools/MCP, Multimodal, Timezone Scheduler & Async Workers (v2.0)** — `lib/chat-session.js`, `lib/memory-tracker.js` (channel-agnostic 3-axis `user` / `group` / `member` memory + L5 lessons + nightly Dream), `lib/auth.js` (file-locked OAuth 2.0 PKCE + localhost loopback callback + Device Flow + 429 failover), `lib/codex-app-server.js`, `lib/scheduler.js`, `createWorkerPool`, and `memoryStore.searchHybrid`.
 - **§44 Large deployment knowledge retrieval & source-aware grounding (v1.10)** — deterministic BM25 + heading + bigram + code retrieval over `knowledge/`, conversational deliverable mode, and source-aware grounding.
 - **§42–§43 Per-turn internal/external boundary, group wall, `style:` & Voice hooks (v1.9)** — verified-ID audience classifier, group lowest-trust content wall, machine-enforced `style:` block, official Voice plugin hooks with claims-invariant protection.
 
-**Built & tested** (`npm test` runs all 20 smoke & unit suites with mutation self-tests):
+**Built & tested** (`npm test` runs all 24 smoke, unit & gate suites with mutation self-tests and isolated `/tmp` tarball verification):
 
 - **§38–41 People in the agent team** — every person gets a **card** (`people/<slug>.md`) they write themselves: how to address them, their roles, what they may approve, which channels reach them, and a short note capped by code. Cards live **outside** `agents/`, so an agent folder stays shareable. Agents bind to **roles** (`serves: [owner]`); the deployment maps roles to people, and every agent of the team — sub-agents included — loads the same card into its cached prefix, so changing how a person is addressed is one edit, not one per agent. A person can **own a step** in `WORK.md`: the run asks them, stops there, and resumes when they (and only they) mark it done. An approval **names its approver**, and the runner checks that person's card — action class, amount, the deployment's ceiling — before the gate opens; every decision goes to a hash-chained audit trail. `scroll audit` fails when a card, a `USER.md` or a `people/` folder travels inside an agent folder, a skill or a plugin. Agents never edit cards: they propose, and the person decides. The suite plants seventeen bugs in the people and runtime code and fails unless each is caught.
 

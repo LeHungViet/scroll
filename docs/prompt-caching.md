@@ -1,43 +1,45 @@
-# Prompt Caching Guide (SCROLL 2.0, §13)
+# Prompt Caching Guide (SCROLL 2.5, §13 & §47.2)
 
-SCROLL is designed from the ground up so LLM prompt caches hit reliably across every tick of an autonomous loop (`scroll run`) and every turn of a live conversation (`scroll chat`).
+SCROLL is designed from the ground up so LLM prompt caches hit reliably across every tick of an autonomous loop (`scroll run`) and every turn of a live conversation (`scroll chat`), even with 200+ MCP tools and alternating multi-speaker group chats.
 
-Every provider computes prefix caches by matching exact token prefixes from byte 0. A single changing timestamp, unsorted tool list, or per-turn RAG snippet injected into the system prompt invalidates the entire cached prefix for the rest of the conversation.
+Every provider computes prefix caches by matching exact token prefixes from byte 0. A single changing timestamp, unsorted tool list, speaker-dependent system prompt flip, or per-turn RAG snippet injected into the system prompt invalidates the entire cached prefix for the rest of the conversation.
 
 ---
 
-## 1. The §13 Two-Region Layout
+## 1. The §13 Three-Region Layout (with §47.2 Tool Retriever & Room-Sticky Groups)
 
 `lib/chat-session.js` enforces a strict three-part wire layout on every turn:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ REGION A -- STABLE PREFIX (byte-identical across turns)              │
+│ REGION A -- STABLE PREFIX (byte-identical across turns & speakers)   │
 │   1. Agent Identity (IDENTITY.md frontmatter)                        │
 │   2. Soul & Persona (SOUL.md)                                        │
 │   3. Hard Rules (hard-rules.md)                                      │
 │   4. L5 Procedural Lessons (agents/<agent>/memory/lessons.md, §7)    │
-│   5. Principal / Team Profile (USER.md rendered for audience, §42)   │
+│   5. Principal / Team Profile (USER.md rendered for room audience)   │
 │   6. Static Voice Character Preset (`voiceBefore.stableSystemBlock`) │
 │   7. Frozen Subject Memory (`stableMemoryBlock`, §32.4)              │
-│   8. External Safety Contract (external/mixed turns only, §42-§44)   │
-│   9. Sorted Tool Schemas (`tools.listSchemas()`, alphabetical)       │
+│   8. Frozen Skills Index (`<available_skills>`, §34)                 │
+│   9. Frozen Tool Catalog (`<available_tools>`, §47.2, <= 1,500 tok)  │
+│  10. External Safety Contract (`templates/external-safety-contract`) │
+│  11. Sorted Active Tool Schemas (always-load + tool_search/invoke)   │
 ├───────────────────────── CACHE BREAKPOINT 1 & 2 ─────────────────────┤
 │ REGION B -- APPEND-ONLY CONVERSATION HISTORY                         │
-│   Turn 1 (user + assistant) ... Turn N-1 (user + assistant)          │
+│   Turn 1 (user + assistant + tool_use/tool_result) ... Turn N-1      │
 ├───────────────────────── CACHE BREAKPOINT 3 ─────────────────────────┤
 │ REGION C -- VOLATILE SUFFIX (inside the final user message)          │
+│   - Sanitized speaker identity (`<turn_speaker ... />`)              │
+│   - Mid-session skills refresh notice (`skills.refresh().notice`)    │
 │   - Retrieved knowledge chunks (§44 `knowledgeChunks`)               │
-│   - Per-turn voice cues (`voiceBefore.volatileTurnBlock`: affect,    │
-│     cadence, move playbook, mode escalation overrides)               │
+│   - Per-turn voice cues (`voiceBefore.volatileTurnBlock`)            │
 │   - Per-turn `contextBlocks` & `voiceBefore.extraContextBlocks`      │
-│   - Dynamic memory (`dynamicMemoryBlock`: current speaker member     │
-│     profile, peer summaries, owner group index)                      │
+│   - Dynamic memory (`dynamicMemoryBlock`: speaker/peer/group index)  │
 │   - Current user message & multimodal attachment notes               │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-Because Region A never mutates between turns and Region B only appends at the tail, the token prefix through Turn N-1 remains byte-identical across turns.
+Because Region A is frozen at the room/deployment level (including **Room-Sticky group posture** so alternating Owner, Teammate, and Guest turns in a shared room NEVER flip `prefixHash`) and Region B only appends at the tail, the token prefix through Turn N-1 remains byte-identical across turns — while per-speaker authorization is strictly enforced inside `tool_search` (Visible Set `V`) and `executeTool` (Executable Set `E`).
 
 ---
 

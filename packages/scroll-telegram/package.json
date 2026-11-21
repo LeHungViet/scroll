@@ -1,0 +1,30 @@
+{
+  "name": "@agentpro/scroll-telegram",
+  "version": "2.5.0",
+  "description": "Zero-dependency Telegram multi-bot fleet adapter for @agentpro/scroll (polling, inline /admin UI, HITL approval buttons, multimodal vision, cron delivery, and plugin hooks).",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./api": "./src/telegram-api.js",
+    "./admin-ui": "./src/telegram-admin-ui.js",
+    "./daemon": "./src/telegram-daemon.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "scroll-telegram": "bin/scroll-telegram.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "dependencies": {},
+  "peerDependencies": {
+    "@agentpro/scroll": "^2.5.0"
+  },
+  "license": "MIT"
+}
