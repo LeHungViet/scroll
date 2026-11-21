@@ -37,6 +37,9 @@ import {
   createWorkerPool,
 } from '../index.js';
 import { createScrollChatRuntime, createLongTaskRunner } from '../lib/chat-sdk/index.js';
+import { snapshotProtectedPathChain, reconcileProtectedPathChain } from '../lib/sandbox.js';
+import { createCodexAppServerClient } from '../lib/codex-app-server.js';
+import { createAuthStore } from '../lib/auth.js';
 
 let pass = 0;
 let fail = 0;
@@ -755,11 +758,20 @@ await t('R2-P0-1..R2-P0-4 + P1s: voiceMeta hold, appendHistory single tool resul
   assert.equal(rOnce2.reason, 'approval_already_used');
   assert.equal(ranCount, 1);
 
-  // Corrupt lockfile MUST fail closed (never fall back to empty TOFU!)
+  // Corrupt or invalid-schema lockfiles (`{ truncated`, `{}`, `[]`, wrong version, invalid tool entry) MUST fail closed!
   const corruptMcpDir = path.join(tmpRoot, 'r3-mcp-corrupt');
   fs.mkdirSync(path.join(corruptMcpDir, '.scroll'), { recursive: true });
-  fs.writeFileSync(path.join(corruptMcpDir, '.scroll', 'mcp.lock.json'), '{ truncated json');
-  assert.throws(() => verifyAndPinTools([], { cwd: corruptMcpDir, autoPin: true }), /mcp_lock_corrupt/);
+  for (const badPayload of [
+    '{ truncated json',
+    '{}',
+    '[]',
+    JSON.stringify({ version: 2, tools: {} }),
+    JSON.stringify({ version: 1, tools: { 'mcp.s.t': null } }),
+    JSON.stringify({ version: 1, tools: { 'mcp.s.t': { server: 's' } } }),
+  ]) {
+    fs.writeFileSync(path.join(corruptMcpDir, '.scroll', 'mcp.lock.json'), badPayload);
+    assert.throws(() => verifyAndPinTools([], { cwd: corruptMcpDir, autoPin: true }), /mcp_lock_corrupt/, `bad lockfile ${badPayload} must fail closed`);
+  }
 
   // Non-streaming JSON truncated tool calls (OpenAI `length` & Anthropic `max_tokens`) MUST set malformed+truncated
   const oaTrunc = pickProvider('openai-compatible', {
@@ -789,16 +801,95 @@ await t('R2-P0-1..R2-P0-4 + P1s: voiceMeta hold, appendHistory single tool resul
   assert.equal(antRes.toolCalls[0].malformed, true);
   assert.equal(antRes.toolCalls[0].truncated, true);
 
-  // Pydantic v2 anyOf nullable union unwraps cleanly to { type, nullable: true }
+  // Pydantic v2 anyOf nullable union unwraps cleanly, while multi-type unions preserve ALL non-null branches!
   const gPydantic = sanitizeGeminiSchema({
     type: 'object',
     properties: {
       opt: { anyOf: [{ type: 'string' }, { type: 'null' }], default: null },
+      multi: { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'null' }] },
+      arrType: { type: ['string', 'integer', 'null'] },
     },
   });
   assert.equal(gPydantic.properties.opt.type, 'string');
   assert.equal(gPydantic.properties.opt.nullable, true);
   assert.equal(gPydantic.properties.opt.anyOf, undefined);
+  assert.equal(gPydantic.properties.multi.type, undefined);
+  assert.equal(gPydantic.properties.multi.nullable, true);
+  assert.deepEqual(gPydantic.properties.multi.anyOf, [{ type: 'string' }, { type: 'number' }]);
+  assert.equal(gPydantic.properties.arrType.nullable, true);
+  assert.deepEqual(gPydantic.properties.arrType.anyOf, [{ type: 'string' }, { type: 'integer' }]);
+
+  // GNU abbreviated `--recurs --forc` blocked by `rm -rf` deny rule
+  const rmGnuAbbrev = evaluateExecPolicy({ command: 'rm', args: ['--recurs', '--forc', '/tmp/x'], denyRules: [['rm', '-rf']] });
+  assert.equal(rmGnuAbbrev.decision, 'deny', 'GNU abbreviated rm --recurs --forc MUST match rm -rf deny rule');
+
+  // bwrap protected path chain: detects & unlinks newly-created intermediate dangling symlink while preserving pre-existing symlink!
+  const bwrapDir = path.join(tmpRoot, 'r4-bwrap-chain');
+  fs.mkdirSync(bwrapDir, { recursive: true });
+  const preExistingTarget = path.join(tmpRoot, 'r4-pre-existing-dir');
+  fs.mkdirSync(preExistingTarget, { recursive: true });
+  fs.symlinkSync(preExistingTarget, path.join(bwrapDir, '.scroll'));
+  const snapGit = snapshotProtectedPathChain(bwrapDir, '.git/hooks');
+  const snapPre = snapshotProtectedPathChain(bwrapDir, '.scroll/audit.json');
+  // Create a dangling intermediate symlink `.git -> /nonexistent_target_xyz`
+  fs.symlinkSync('/nonexistent_target_xyz', path.join(bwrapDir, '.git'));
+  assert.equal(reconcileProtectedPathChain(snapGit), true, 'dangling intermediate symlink MUST be detected as protected path violation');
+  let gitExistsAfter = true;
+  try { fs.lstatSync(path.join(bwrapDir, '.git')); } catch { gitExistsAfter = false; }
+  assert.equal(gitExistsAfter, false, 'dangling intermediate symlink MUST be unlinked');
+  assert.equal(reconcileProtectedPathChain(snapPre), false, 'untouched pre-existing symlink MUST NOT be flagged or unlinked');
+  assert.equal(fs.lstatSync(path.join(bwrapDir, '.scroll')).isSymbolicLink(), true, 'pre-existing symlink MUST be preserved');
+
+  // Codex strict turnId: coalesces >256 early deltas without dropping turn/completed, ignores item.turnId spoofing & foreign thread/tokenUsage/updated!
+  const mockCodexR4 = path.join(tmpRoot, 'r4-mock-codex.mjs');
+  fs.writeFileSync(mockCodexR4, `
+import readline from 'node:readline';
+const rl = readline.createInterface({ input: process.stdin });
+const send = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
+rl.on('line', (line) => {
+  if (!line.trim()) return;
+  const msg = JSON.parse(line);
+  if (msg.method === 'initialize') { send({ jsonrpc: '2.0', id: msg.id, result: { ok: true } }); return; }
+  if (msg.method === 'model/list') { send({ jsonrpc: '2.0', id: msg.id, result: { data: [{ id: 'gpt-5.4' }] } }); return; }
+  if (msg.method === 'thread/start') { send({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: 'thr-r4' } } }); return; }
+  if (msg.method === 'turn/start') {
+    const tid = 'turn-r4-1';
+    // Emit 300 early deltas + foreign usage + spoofed item.turnId + early turn/completed BEFORE responding to turn/start!
+    for (let i = 0; i < 300; i++) {
+      send({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId: 'thr-r4', turnId: tid, delta: 'a' } });
+    }
+    send({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId: 'thr-r4', item: { turnId: tid }, delta: 'SPOOF' } });
+    send({ jsonrpc: '2.0', method: 'thread/tokenUsage/updated', params: { threadId: 'thr-r4', turnId: 'turn-other', tokenUsage: { last: { inputTokens: 9999, outputTokens: 9999, totalTokens: 19998 } } } });
+    send({ jsonrpc: '2.0', method: 'thread/tokenUsage/updated', params: { threadId: 'thr-r4', turnId: tid, tokenUsage: { last: { inputTokens: 50, cachedInputTokens: 10, outputTokens: 20, totalTokens: 70 } } } });
+    send({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'thr-r4', turn: { id: tid, status: 'completed' } } });
+    setTimeout(() => send({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: tid } } }), 15);
+  }
+});
+`);
+  const codexClient = createCodexAppServerClient({
+    command: process.execPath,
+    args: [mockCodexR4],
+    timeoutMs: 5000,
+  });
+  try {
+    const r4Turn = await codexClient.generate('hello', { ephemeral: true });
+    assert.equal(r4Turn.text, 'a'.repeat(300), '300 coalesced early deltas MUST arrive intact without SPOOF or dropped turn/completed');
+    assert.equal(r4Turn.usage?.outputTokens, 20, 'foreign turn tokenUsage MUST NOT overwrite current turn usage');
+  } finally {
+    await codexClient.close();
+  }
+
+  // auth.js per-dead-lock .reap.<deadKey> + .claim.<deadReaperKey> reclaims dead lock + dead reaper cleanly
+  const authLockDir = path.join(tmpRoot, 'r4-auth-reap');
+  fs.mkdirSync(authLockDir, { recursive: true });
+  const authFile = path.join(authLockDir, 'auth.json');
+  const deadLockTok = '999999-deadbeef0001';
+  fs.writeFileSync(`${authFile}.lock`, JSON.stringify({ pid: 999999, token: deadLockTok, ts: Date.now() - 60_000 }) + '\n');
+  fs.writeFileSync(`${authFile}.lock.reap.tok-${deadLockTok}`, JSON.stringify({ pid: 999998, token: '999998-deadreap0001', ts: Date.now() - 60_000 }) + '\n');
+  const aStore = createAuthStore({ filePath: authFile });
+  await aStore.upsertProfile({ id: 'p1', provider: 'openai', kind: 'api_key', key: 'sk-test-r4' });
+  const listed = aStore.listProfiles({ provider: 'openai' });
+  assert.equal(listed.length, 1, 'auth store MUST reclaim dead .lock + dead .reap cleanly');
 
   // P1: audit --verify MUST catch deleted agent
   const audDir = path.join(tmpRoot, 'r2-audit-del');
