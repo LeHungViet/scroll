@@ -478,7 +478,7 @@ rl.on('line', (line) => {
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: 904, method: 'item/tool/call', params: { threadId: m.params.threadId, turnId: tid, callId: 'c_mut', tool: 'mutate_state', arguments: {} } }) + '\\n');
     }
   } else if (m.id === 903) {
-    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId: 'thr_1', delta: JSON.stringify({ lastImageExisted, lastImagePath }) } }) + '\\n');
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId: 'thr_1', turnId: 'turn_1', delta: JSON.stringify({ lastImageExisted, lastImagePath }) } }) + '\\n');
     process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'thr_1', turn: { id: 'turn_1', status: 'completed' } } }) + '\\n');
   } else if (m.id === 904) {
     process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'thr_1', turn: { id: 'turn_2', status: 'failed', error: { message: 'server_disconnect_after_tool' } } } }) + '\\n');

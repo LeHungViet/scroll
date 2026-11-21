@@ -650,10 +650,13 @@ await t('R2-P0-1..R2-P0-4 + P1s: voiceMeta hold, appendHistory single tool resul
   assert.equal(evaluateExecPolicy({ command: 'git', args: ['status'], allowRules: [['git', 'status']] }).ok, true);
   assert.equal(evaluateExecPolicy({ command: 'rm', args: ['-r', '-f', 'tmp'], denyRules: [['rm', '-rf']] }).ok, false);
   assert.equal(evaluateExecPolicy({ command: 'rm', args: ['-fr', 'tmp'], denyRules: [['rm', '-rf']] }).ok, false);
+  assert.equal(evaluateExecPolicy({ command: 'rm', args: ['-Rf', 'tmp'], denyRules: [['rm', '-rf']] }).ok, false);
+  assert.equal(evaluateExecPolicy({ command: 'rm', args: ['--recursive', '--force', 'tmp'], denyRules: [['rm', '-rf']] }).ok, false);
 
-  // Seatbelt allowNetwork: true MUST emit `(allow network-outbound (remote ip))`, NEVER `(allow network*)`
+  // Seatbelt allowNetwork: true MUST emit `(allow network-outbound (remote ip))` + mDNSResponder, NEVER `(allow network*)`
   const netSbpl = buildSeatbeltProfile({ cwd: dir, command: '/bin/echo', allowNetwork: true });
   assert.ok(netSbpl.includes('(allow network-outbound (remote ip))'));
+  assert.ok(netSbpl.includes('/private/var/run/mDNSResponder'));
   assert.ok(!netSbpl.includes('(allow network*)'));
 
   // 4. R2-P0-2: MCP pre-spawn cmdHash check refuses spawning altered stdio command + blocks new tool on locked server + blocks quarantined callTool
@@ -751,6 +754,51 @@ await t('R2-P0-1..R2-P0-4 + P1s: voiceMeta hold, appendHistory single tool resul
   assert.equal(rOnce2.ok, false);
   assert.equal(rOnce2.reason, 'approval_already_used');
   assert.equal(ranCount, 1);
+
+  // Corrupt lockfile MUST fail closed (never fall back to empty TOFU!)
+  const corruptMcpDir = path.join(tmpRoot, 'r3-mcp-corrupt');
+  fs.mkdirSync(path.join(corruptMcpDir, '.scroll'), { recursive: true });
+  fs.writeFileSync(path.join(corruptMcpDir, '.scroll', 'mcp.lock.json'), '{ truncated json');
+  assert.throws(() => verifyAndPinTools([], { cwd: corruptMcpDir, autoPin: true }), /mcp_lock_corrupt/);
+
+  // Non-streaming JSON truncated tool calls (OpenAI `length` & Anthropic `max_tokens`) MUST set malformed+truncated
+  const oaTrunc = pickProvider('openai-compatible', {
+    apiKey: 'test-key',
+    model: 'gpt-4o-mini',
+    fetchImpl: async () => new Response(JSON.stringify({
+      id: 'chatcmpl_trunc',
+      choices: [{ finish_reason: 'length', message: { content: '', tool_calls: [{ id: 'c1', function: { name: 'danger', arguments: '' } }] } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }),
+  });
+  const oaRes = await oaTrunc.generate('hi', { stream: false });
+  assert.equal(oaRes.toolCalls[0].malformed, true);
+  assert.equal(oaRes.toolCalls[0].truncated, true);
+
+  const antTrunc = pickProvider('anthropic', {
+    apiKey: 'test-key',
+    model: 'claude-sonnet-4-5',
+    fetchImpl: async () => new Response(JSON.stringify({
+      id: 'msg_trunc',
+      stop_reason: 'max_tokens',
+      content: [{ type: 'tool_use', id: 'tu_1', name: 'danger', input: {} }],
+      usage: { input_tokens: 10, output_tokens: 5 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }),
+  });
+  const antRes = await antTrunc.generate('hi', { stream: false });
+  assert.equal(antRes.toolCalls[0].malformed, true);
+  assert.equal(antRes.toolCalls[0].truncated, true);
+
+  // Pydantic v2 anyOf nullable union unwraps cleanly to { type, nullable: true }
+  const gPydantic = sanitizeGeminiSchema({
+    type: 'object',
+    properties: {
+      opt: { anyOf: [{ type: 'string' }, { type: 'null' }], default: null },
+    },
+  });
+  assert.equal(gPydantic.properties.opt.type, 'string');
+  assert.equal(gPydantic.properties.opt.nullable, true);
+  assert.equal(gPydantic.properties.opt.anyOf, undefined);
 
   // P1: audit --verify MUST catch deleted agent
   const audDir = path.join(tmpRoot, 'r2-audit-del');

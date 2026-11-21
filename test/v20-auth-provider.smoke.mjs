@@ -220,14 +220,15 @@ rl.on('line', (line) => {
       return;
     }
     setTimeout(() => {
-      send({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId: msg.params.threadId, delta: 'Hello ' } });
-      send({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId: msg.params.threadId, delta: 'world!' } });
+      send({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId: msg.params.threadId, turnId: tid, delta: 'Hello ' } });
+      send({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId: msg.params.threadId, turnId: tid, delta: 'world!' } });
       send({ jsonrpc: '2.0', method: 'thread/tokenUsage/updated', params: { threadId: msg.params.threadId, tokenUsage: { last: { inputTokens: 120, cachedInputTokens: 40, outputTokens: 12, totalTokens: 132 } } } });
       send({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: msg.params.threadId, turn: { id: tid, status: 'completed' } } });
     }, 15);
   } else if (msg.id === 9001 && msg.result) {
     const out = msg.result.contentItems?.[0]?.text || '';
-    send({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId: 'thr-001', delta: 'ToolSaid:' + out } });
+    const lastTid = 'turn-' + turnSeq;
+    send({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId: 'thr-001', turnId: lastTid, delta: 'ToolSaid:' + out } });
     send({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'thr-001', turn: { id: 'turn-' + turnSeq, status: 'completed' } } });
   } else if (msg.method === 'turn/interrupt') {
     send({ jsonrpc: '2.0', id: msg.id, result: { interrupted: true } });
