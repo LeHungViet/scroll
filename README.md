@@ -45,11 +45,11 @@ The thesis in one line: **SCROLL doesn't try to make the model smarter — it ma
 
 ## Implementation status (2026-11-21 · v2.0)
 
-- **§45–§50 Interactive Chat Runtime, Unified Auth, Live Tools/MCP, Multimodal, Timezone Scheduler & Async Workers (v2.0)** — `lib/chat-session.js` (`scroll chat`), `lib/auth.js` (`scroll auth` — OAuth 2.0 PKCE, Device Flow, multi-account 429 failover), `lib/codex-app-server.js` (persistent JSON-RPC stdio client for ChatGPT OAuth & streaming), `lib/mcp-client.js` & `lib/tools.js` (live multi-round tool calls & zero-dep MCP stdio client behind §21/§22/§28/§42 gates), `lib/scheduler.js` (`scroll cron` — IANA timezone cron, owner DM authority, kill-switch & budget cap), `createWorkerPool`, and `memoryStore.searchHybrid`.
+- **§45–§50 Interactive Chat Runtime, Unified Auth, Live Tools/MCP, Multimodal, Timezone Scheduler & Async Workers (v2.0)** — `lib/chat-session.js` (`scroll chat` with strict §13 stable-prefix/volatile-suffix prompt caching & Codex persistent thread reuse), `lib/memory-tracker.js` (channel-agnostic 3-axis `user` / `group` / `member` memory + L5 lessons + nightly Dream for any surface), `lib/auth.js` (`scroll auth` — OAuth 2.0 PKCE, Device Flow, multi-account 429 failover), `lib/codex-app-server.js` (persistent JSON-RPC stdio client for ChatGPT OAuth & streaming), `lib/mcp-client.js` & `lib/tools.js` (deterministically sorted schemas & zero-dep MCP stdio client behind §21/§22/§28/§42 gates), `lib/scheduler.js` (`scroll cron` — IANA timezone cron, owner DM authority, kill-switch & budget cap), `createWorkerPool`, and `memoryStore.searchHybrid`.
 - **§44 Large deployment knowledge retrieval & source-aware grounding (v1.10)** — deterministic BM25 + heading + bigram + code retrieval over `knowledge/`, conversational deliverable mode, and source-aware grounding.
 - **§42–§43 Per-turn internal/external boundary, group wall, `style:` & Voice hooks (v1.9)** — verified-ID audience classifier, group lowest-trust content wall, machine-enforced `style:` block, official Voice plugin hooks with claims-invariant protection.
 
-**Built & tested** (`npm test` runs all 19 smoke & unit suites with mutation self-tests):
+**Built & tested** (`npm test` runs all 20 smoke & unit suites with mutation self-tests):
 
 - **§38–41 People in the agent team** — every person gets a **card** (`people/<slug>.md`) they write themselves: how to address them, their roles, what they may approve, which channels reach them, and a short note capped by code. Cards live **outside** `agents/`, so an agent folder stays shareable. Agents bind to **roles** (`serves: [owner]`); the deployment maps roles to people, and every agent of the team — sub-agents included — loads the same card into its cached prefix, so changing how a person is addressed is one edit, not one per agent. A person can **own a step** in `WORK.md`: the run asks them, stops there, and resumes when they (and only they) mark it done. An approval **names its approver**, and the runner checks that person's card — action class, amount, the deployment's ceiling — before the gate opens; every decision goes to a hash-chained audit trail. `scroll audit` fails when a card, a `USER.md` or a `people/` folder travels inside an agent folder, a skill or a plugin. Agents never edit cards: they propose, and the person decides. The suite plants seventeen bugs in the people and runtime code and fails unless each is caught.
 
@@ -278,7 +278,8 @@ Useful `run` flags: `--for <slug>` (the person this step serves) · `--people <d
 Your *agents* are never packaged — they're folders you own and version, like `AGENTS.md`.
 
 ## Learn more
-- [`SPEC.md`](./SPEC.md) — the formal agent-folder + frontmatter spec (incl. §21 permissions, §22 grounding, §23 LOOP, §38–41 people)
+- [`SPEC.md`](./SPEC.md) — the formal agent-folder + frontmatter spec (incl. §13 prompt caching, §21 permissions, §22 grounding, §23 LOOP, §31–§33 memory, §38–41 people)
+- [`docs/prompt-caching.md`](./docs/prompt-caching.md) — practical prompt caching guide across Anthropic, OpenAI, Codex App-Server, Gemini, and Grok
 - [`AGENTS.md`](./AGENTS.md) — how AI coding tools follow SCROLL
 - [`templates/`](./templates/) — a worked agent + a `WORK.md` + a `LOOP.md`
 

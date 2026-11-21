@@ -8,6 +8,7 @@ export * from './lib/tools.js';
 export * from './lib/scheduler.js';
 export * from './lib/chat-session.js';
 export * from './lib/memory.js';
+export * from './lib/memory-tracker.js';
 export * from './lib/user.js';
 export * from './lib/knowledge.js';
 export * from './lib/grounding.js';

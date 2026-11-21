@@ -238,7 +238,7 @@ A loader **MUST** assemble an agent's context in two regions, in this order:
 ```
 
 - The stable prefix **MUST** be byte-identical across ticks of the same agent so provider prompt-caching hits. Tools **MUST NOT** interleave volatile content into the prefix.
-- Where a provider's default cache lifetime is short, loaders **MUST** set an explicit cache TTL; cached reads are typically billed at a small fraction of fresh input. Consult the provider's caching documentation — this spec fixes no vendor's numbers.
+- Where a provider's default cache lifetime is short, loaders **MUST** set an explicit cache TTL; cached reads are typically billed at a small fraction of fresh input. Consult the provider's caching documentation — this spec fixes no vendor's numbers. See [`docs/prompt-caching.md`](./docs/prompt-caching.md) for the reference chat-session layout and per-provider adapter behavior (Anthropic 3-breakpoint caching, OpenAI `prompt_cache_key`, Codex App-Server persistent `threadId` reuse, and Gemini explicit `cachedContent`).
 - Skills are referenced by **index** (name + one-line description) in the prefix; full skill bodies load **on demand** (progressive disclosure). §34 specifies the loader, the index and the read tools; skill *content* is out of scope.
 
 ---
@@ -759,7 +759,7 @@ Raw turns older than `retention_days` are removed by the mechanical tier; cards,
 
 ## §33 — Groups, shared accounts and many surfaces (v1.7)
 
-> Reference impl: `lib/memory.js` (`addMember` · `removeMember` · `proposeToGroup`).
+> Reference impl: `lib/memory.js` (`addMember` · `removeMember` · `proposeToGroup`) and `lib/memory-tracker.js` (`createScopedMemoryTracker` — channel-agnostic 3-axis `user` / `group` / `member` tracker + L5 lessons + sweep/dream orchestration for any surface).
 
 - Subject kinds: `person | group | agent | project`. A **group** (a household, a team, a company) is a subject with its own store.
 - Membership is a `system_verified` op written to both journals: `member_of { group, role, read: [namespaces], write: [namespaces] }`. Only trusted callers create it.
