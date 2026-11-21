@@ -40,6 +40,7 @@ import { createScrollChatRuntime, createLongTaskRunner } from '../lib/chat-sdk/i
 import { snapshotProtectedPathChain, reconcileProtectedPathChain } from '../lib/sandbox.js';
 import { createCodexAppServerClient } from '../lib/codex-app-server.js';
 import { createAuthStore } from '../lib/auth.js';
+import { spawn } from 'node:child_process';
 
 let pass = 0;
 let fail = 0;
@@ -869,6 +870,26 @@ await t('R2-P0-1..R2-P0-4 + P1s: voiceMeta hold, appendHistory single tool resul
   });
   assert.equal(gRootOneOf.type, 'object');
   assert.equal(gRootOneOf.anyOf, undefined);
+  assert.deepEqual(gRootOneOf.properties, { x: { type: 'string' }, y: { type: 'number' } }, 'object oneOf branch properties MUST be preserved');
+
+  // Implicit object container (`properties` without explicit `type`) with `anyOf` MUST emit `type: 'object'`
+  const gImplicitObj = sanitizeGeminiSchema({
+    properties: { a: { type: 'string' } },
+    anyOf: [{ required: ['a'] }],
+  });
+  assert.equal(gImplicitObj.type, 'object');
+  assert.equal(gImplicitObj.anyOf, undefined);
+  assert.deepEqual(gImplicitObj.properties, { a: { type: 'string' } });
+
+  // Nullable single-type array `type: ['string', 'null']` + `anyOf` inherits `'string'` cleanly
+  const gNullableScalarAnyOf = sanitizeGeminiSchema({
+    type: ['string', 'null'],
+    anyOf: [{ enum: ['A'] }, { minLength: 5 }],
+  });
+  assert.deepEqual(gNullableScalarAnyOf, {
+    anyOf: [{ type: 'string', enum: ['A'] }, { type: 'string', minLength: 5 }],
+    nullable: true,
+  });
 
   // GNU abbreviated `--recurs --forc` blocked by `rm -rf` deny rule
   const rmGnuAbbrev = evaluateExecPolicy({ command: 'rm', args: ['--recurs', '--forc', '/tmp/x'], denyRules: [['rm', '-rf']] });
@@ -941,16 +962,22 @@ rl.on('line', (line) => {
   fs.writeFileSync(`${authFile}.lock.reap.tok-${deadLockTok}.claim.tok-${deadReapTok}`, JSON.stringify({ pid: 999997, token: '999997-deadclaim001', ts: Date.now() - 60_000 }) + '\n');
   const aStore = createAuthStore({ filePath: authFile });
   aStore.upsertProfile({ id: 'p1', provider: 'openai', type: 'api_key', apiKey: 'sk-test-r4' });
-  // 4 concurrent waiters racing on the same triple-crash (.lock + .reap + .claim) MUST all succeed with 0 leftovers!
-  const refResults = await Promise.all([
-    aStore.refreshTokenIfNeeded('p1', { force: true }),
-    aStore.refreshTokenIfNeeded('p1', { force: true }),
-    aStore.refreshTokenIfNeeded('p1', { force: true }),
-    aStore.refreshTokenIfNeeded('p1', { force: true }),
-  ]);
-  assert.equal(refResults.every((r) => r.profile.id === 'p1'), true, 'concurrent waiters MUST reclaim dead .lock + dead .reap + dead .claim cleanly');
+  // Spawn 4 real OS child processes simultaneously racing on the same triple-crash (.lock + .reap + .claim)!
+  const authModuleUrl = new URL('../lib/auth.js', import.meta.url).href;
+  const workerScript = `
+    import { createAuthStore } from ${JSON.stringify(authModuleUrl)};
+    const s = createAuthStore({ filePath: ${JSON.stringify(authFile)} });
+    const res = await s.refreshTokenIfNeeded('p1', { force: true });
+    if (res?.profile?.id !== 'p1') process.exit(2);
+  `;
+  const procCodes = await Promise.all(Array.from({ length: 4 }, () => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', workerScript], { stdio: 'ignore' });
+    child.on('error', reject);
+    child.on('exit', (code) => resolve(code));
+  })));
+  assert.deepEqual(procCodes, [0, 0, 0, 0], '4 concurrent OS processes MUST all reclaim dead .lock + dead .reap + dead .claim cleanly');
   const leftovers = fs.readdirSync(authLockDir).filter((f) => f.includes('.lock'));
-  assert.deepEqual(leftovers, [], 'no stale .lock/.reap/.claim files may remain after recovery');
+  assert.deepEqual(leftovers, [], 'no stale .lock/.reap/.claim files may remain after multi-process recovery');
 
   // P1: audit --verify MUST catch deleted agent
   const audDir = path.join(tmpRoot, 'r2-audit-del');
