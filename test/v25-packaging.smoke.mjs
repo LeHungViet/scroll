@@ -21,20 +21,20 @@ const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'scroll-v25-pack-'));
 console.log('SCROLL 2.5 -- 2-Package Monorepo Tarball Gate, Zero-Leak Scan, & CLI Subcommands (G13, G14)');
 
 // ── G13: Package metadata, zero dependencies, exports map, & clean /tmp tarball install ──
-await t('G13: @agentpro/scroll & @agentpro/scroll-telegram lockstep 2.5.0 with dependencies: {} and zero relative parent imports', () => {
+await t('G13: @agentpro/scroll & @agentpro/scroll-telegram lockstep 2.5.x with dependencies: {} and zero relative parent imports', () => {
   const rootPkg = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
   const tgPkg = JSON.parse(fs.readFileSync(path.join(TG_PKG_DIR, 'package.json'), 'utf8'));
 
-  assert.equal(rootPkg.version, '2.5.0');
+  assert.match(rootPkg.version, /^2\.5\.\d+$/);
   assert.deepEqual(rootPkg.dependencies, {});
   assert.ok(rootPkg.exports['.']);
   assert.ok(rootPkg.exports['./chat']);
   assert.ok(rootPkg.exports['./lib/*'], 'Bot Room backward-compat ./lib/* export must be preserved');
 
   assert.equal(tgPkg.name, '@agentpro/scroll-telegram');
-  assert.equal(tgPkg.version, '2.5.0');
+  assert.equal(tgPkg.version, rootPkg.version);
   assert.deepEqual(tgPkg.dependencies, {});
-  assert.equal(tgPkg.peerDependencies['@agentpro/scroll'], '^2.5.0');
+  assert.equal(tgPkg.peerDependencies['@agentpro/scroll'], `^${rootPkg.version}`);
 
   // Verify zero parent relative imports (`../../` escaping package) in scroll-telegram
   for (const rel of ['src/index.js', 'src/telegram-api.js', 'src/telegram-admin-ui.js', 'src/telegram-daemon.js', 'bin/scroll-telegram.js']) {
