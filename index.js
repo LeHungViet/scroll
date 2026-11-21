@@ -28,6 +28,7 @@ export * from './lib/runtime.js';
 export * from './lib/digest.js';
 export * from './lib/installers.js';
 export * from './lib/ledger.js';
+export * from './lib/alerts.js';
 export * from './lib/skill-eval.js';
 // Explicit disambiguation for `parseAmount` exported by both `people.js` and `grounding.js`
 export { parseAmount } from './lib/grounding.js';

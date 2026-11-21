@@ -2,6 +2,7 @@
 import type { ChatTurnResult, ScrollProvider } from './index.d.ts';
 
 export const ADMIN_CALLBACK_NAMESPACE: string;
+export const ALERTS_CALLBACK_NAMESPACE: string;
 export const DEFAULT_DELEGATED_GROUP_TOOLS: readonly string[];
 
 export function createMessageDebouncer(opts: {
@@ -31,6 +32,10 @@ export function createGroupGrantStore(opts?: {
 export function matchesOwnerDelegationPhrase(text: string, extraPatterns?: RegExp[]): boolean;
 export function createLongTaskRunner(opts: Record<string, unknown>): Record<string, unknown>;
 export function createAdminController(opts: Record<string, unknown>): Record<string, unknown>;
+export function createAlertLedger(opts?: Record<string, unknown>): Record<string, unknown>;
+export function createAlertsController(opts: Record<string, unknown>): Record<string, unknown>;
+export function sanitizeUntrustedQuote(text: string, opts?: { maxChars?: number }): string;
+export function buildGoogleCalendarTemplateUrl(opts: Record<string, unknown>): string | null;
 
 export function createScrollChatRuntime(opts: {
   agentName: string;

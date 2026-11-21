@@ -100,6 +100,10 @@ export function createAuditChain(opts?: Record<string, unknown>): Record<string,
 export function verifyAuditChain(filePath: string): { ok: boolean; count: number; errors: unknown[] };
 export function createBudgetGovernor(opts?: Record<string, unknown>): Record<string, unknown>;
 export function createApprovalStore(opts?: Record<string, unknown>): Record<string, unknown>;
+export function createAlertLedger(opts?: Record<string, unknown>): Record<string, unknown>;
+export function computeArgsHash(tool: string, args: Record<string, unknown>): string;
+export function verifyTopHopAuthGrade(opts?: Record<string, unknown>): { authGrade: string; reason: string; alignedDomain: string };
+export function computeUrgencyAndSeverity(caseObj: Record<string, unknown>, opts?: Record<string, unknown>): Record<string, unknown>;
 export function acquireWriterLock(stateDir: string, opts?: { lockName?: string; owner?: string }): { acquired: boolean; lockPath?: string; token?: string; release: () => void };
 export function evaluateExecPolicy(opts: { command: string; args?: string[]; allowRules?: unknown[] | null; denyRules?: unknown[] | null }): { ok: boolean; decision: 'allow' | 'deny'; reason?: string; matchedRule?: string[] | null };
 export function pruneOldToolResults(messages: unknown[], opts?: { keepRecentToolMessages?: number; maxOldChars?: number }): { messages: unknown[]; prunedCount: number; savedChars: number };
