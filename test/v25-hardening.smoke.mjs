@@ -864,8 +864,26 @@ await t('R2-P0-1..R2-P0-4 + P1s: voiceMeta hold, appendHistory single tool resul
   const gRootOneOf = sanitizeGeminiSchema({
     type: 'object',
     oneOf: [
-      { properties: { x: { type: 'string' }, v: { type: 'string' } }, required: ['x'] },
-      { properties: { y: { type: 'number' }, v: { type: 'integer' } }, required: ['y'] },
+      {
+        properties: {
+          x: { type: 'string' },
+          v: { type: 'string' },
+          constrained: { type: ['string', 'integer'], enum: ['a'] },
+          refOnly: { $ref: '#/$defs/X' },
+          descUnion: { description: 'keep me', anyOf: [{ type: 'string' }, { type: 'number' }] },
+        },
+        required: ['x'],
+      },
+      {
+        properties: {
+          y: { type: 'number' },
+          v: { type: 'integer' },
+          constrained: { type: 'boolean' },
+          refOnly: { type: 'integer' },
+          descUnion: { description: 'keep me', anyOf: [{ type: 'string' }, { type: 'number' }] },
+        },
+        required: ['y'],
+      },
     ],
   });
   assert.equal(gRootOneOf.type, 'object');
@@ -874,7 +892,15 @@ await t('R2-P0-1..R2-P0-4 + P1s: voiceMeta hold, appendHistory single tool resul
     x: { type: 'string' },
     y: { type: 'number' },
     v: { anyOf: [{ type: 'string' }, { type: 'integer' }] },
-  }, 'object oneOf branch properties MUST preserve both types when branches share a key');
+    constrained: {
+      anyOf: [
+        { anyOf: [{ type: 'string' }, { type: 'integer' }], enum: ['a'] },
+        { type: 'boolean' },
+      ],
+    },
+    refOnly: { type: 'integer' },
+    descUnion: { description: 'keep me', anyOf: [{ type: 'string' }, { type: 'number' }] },
+  }, 'object oneOf branch properties MUST preserve sibling constraints, descriptions, and prune empty $ref branches');
 
   // Implicit object container (`properties` without explicit `type`) with `anyOf` MUST emit `type: 'object'`
   const gImplicitObj = sanitizeGeminiSchema({
@@ -983,7 +1009,7 @@ rl.on('line', (line) => {
     const killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 10_000);
     child.stderr.on('data', (c) => { stderr += String(c); });
     child.on('error', (e) => { clearTimeout(killTimer); reject(e); });
-    child.on('exit', (code) => { clearTimeout(killTimer); resolve({ code, stderr }); });
+    child.on('close', (code) => { clearTimeout(killTimer); resolve({ code, stderr }); });
   })));
   assert.deepEqual(procResults.map((r) => r.code), [0, 0, 0, 0], `4 concurrent OS processes MUST all succeed: ${JSON.stringify(procResults)}`);
   const leftovers = fs.readdirSync(authLockDir).filter((f) => f.includes('.lock'));
