@@ -13,6 +13,7 @@ import {
 import {
   createAlertsController,
   sanitizeUntrustedQuote,
+  sanitizeSafeHtmlMessage,
   buildGoogleCalendarTemplateUrl,
   makeAlertCallbackData,
 } from '../lib/chat-sdk/index.js';
@@ -844,7 +845,126 @@ async function run() {
     assert.ok(digest.text.includes('&amp;'));
   });
 
-  console.log(`\nALL ${passed}/9 §51 Smart Alerts gates PASSED!`);
+  // ── T10: Cross-vendor security burst, multi-channel merge, & human prose style ──
+  await test('T10: cross-vendor login+passkey burst, multi-channel merge, & human prose style + link sanitizer', async () => {
+    const dir = tmpDir();
+    let now = DAY_10AM;
+    const ledger = createAlertLedger({
+      stateDir: dir,
+      shadowMode: false,
+      pinnedDomains: ['google.com', 'facebook.com', 'mbbank.com.vn'],
+      clock: () => now,
+    });
+
+    // Cross-vendor 7-min account takeover burst: Google login 14:49 -> Facebook login 14:54 -> Facebook passkey 14:56
+    const g1 = ledger.ingestSignal({
+      signalId: 'sec_g1',
+      source: 'gmail',
+      isEmail: true,
+      trustedConnectorInbox: true,
+      fromDomain: 'google.com',
+      category: 'security_critical',
+      stage: 'security_alert',
+      securitySubkind: 'login',
+      summary: 'New sign-in to Google on Mac at 14:49',
+      occurredAt: now,
+      observedAt: now,
+    });
+    const f1 = ledger.ingestSignal({
+      signalId: 'sec_f1',
+      source: 'gmail',
+      isEmail: true,
+      trustedConnectorInbox: true,
+      fromDomain: 'facebook.com',
+      category: 'security_critical',
+      stage: 'security_alert',
+      securitySubkind: 'login',
+      summary: 'New Facebook login on Mac at 14:54',
+      occurredAt: now + 5 * 60_000,
+      observedAt: now + 5 * 60_000,
+    });
+    const f2 = ledger.ingestSignal({
+      signalId: 'sec_f2',
+      source: 'gmail',
+      isEmail: true,
+      trustedConnectorInbox: true,
+      fromDomain: 'facebook.com',
+      category: 'security_critical',
+      stage: 'security_alert',
+      securitySubkind: 'passkey_or_2fa',
+      summary: 'Passkey added to Facebook at 14:56',
+      occurredAt: now + 7 * 60_000,
+      observedAt: now + 7 * 60_000,
+    });
+    assert.equal(f1.action, 'merged', 'cross-vendor login within 60m must merge into security burst case');
+    assert.equal(f2.action, 'merged', 'passkey addition 2m later must merge into same security burst case');
+    assert.equal(f2.case.caseId, g1.case.caseId);
+    assert.equal(f2.case.securityBurst, true);
+    assert.equal(f2.case.distinctVendors.length, 2);
+    assert.equal(f2.case.distinctCount, 3);
+
+    // Multi-channel corroboration: Outlook + Telegram group sharing correlationTag `mbbank`
+    const mbEmail = ledger.ingestSignal({
+      signalId: 'mb_ol_1',
+      source: 'outlook',
+      isEmail: true,
+      trustedConnectorInbox: true,
+      fromDomain: 'mbbank.com.vn',
+      category: 'finance_obligation',
+      stage: 'issued',
+      correlationTags: ['mbbank', 'mb_qr'],
+      summary: 'MB QR statement fee 1,100,000 VND before 27/11',
+      occurredAt: now,
+      observedAt: now,
+    });
+    const mbGroup = ledger.ingestSignal({
+      signalId: 'mb_grp_1',
+      source: 'telegram_group',
+      isGroup: true,
+      containerId: '-9001',
+      senderTrust: 'internal',
+      category: 'finance_obligation',
+      stage: 'reminder',
+      correlationTags: ['mbbank', 'mb_qr'],
+      summary: 'Team flagged MB QR statement fee 1,100,000 VND due 27/11',
+      occurredAt: now + 20 * 60_000,
+      observedAt: now + 20 * 60_000,
+    });
+    assert.equal(mbGroup.action, 'merged', 'multi-channel email + group sharing correlationTags must merge');
+    assert.equal(mbGroup.case.caseId, mbEmail.case.caseId);
+    assert.deepEqual(mbGroup.case.distinctChannels.sort(), ['outlook', 'telegram_group']);
+
+    // Safe HTML sanitizer keeps allowlisted Outlook permalink & strips phishing anchor
+    const html = sanitizeSafeHtmlMessage(
+      'Check <b>MB Bank</b> now. <a href="https://outlook.live.com/mail/0/inbox/id/abc">View in Outlook</a> and <a href="https://evil-phish.xyz/login">Steal</a>'
+    );
+    assert.ok(html.includes('<b>MB Bank</b>'));
+    assert.ok(html.includes('href="https://outlook.live.com/mail/0/inbox/id/abc"'));
+    assert.ok(!html.includes('evil-phish.xyz'), 'phishing anchor href must be stripped');
+
+    // Human style controller sends ZERO buttons on non-action alerts and supports composeNotice veto
+    const sent = [];
+    const ctrl = createAlertsController({
+      ledger,
+      ownerIds: ['1330502578'],
+      style: 'human',
+      format: 'html',
+      composeNotice: async (c) => {
+        if (c.caseId === mbEmail.case.caseId) return { skip: true, skipReason: 'low_priority_veto' };
+        return { text: 'Hey, did you just sign in to <b>Google</b> and add a Facebook <b>passkey</b>?', parseMode: 'HTML' };
+      },
+    });
+    await ctrl.dispatchDueNotices({
+      nowMs: now + 25 * 60_000,
+      sendOwnerMessage: async (card) => { sent.push(card); return { messageId: 'm_hum_1' }; },
+    });
+    assert.equal(sent.length, 1, 'vetoed case must be suppressed, security burst must be sent');
+    assert.equal(sent[0].buttons.length, 0, 'human style non-action alert must have zero robotic buttons');
+    assert.equal(ledger.getCase(mbEmail.case.caseId).state, 'closed');
+    assert.equal(ledger.getCase(mbEmail.case.caseId).closedReason, 'low_priority_veto');
+  });
+
+  console.log(`\nALL ${passed}/10 §51 Smart Alerts gates PASSED!`);
 }
 
 run().catch((err) => {
