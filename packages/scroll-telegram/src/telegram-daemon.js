@@ -595,7 +595,7 @@ export async function createTelegramFleetDaemon(config = {}, {
         }
       } catch (err) {
         if (stopped || bot.pollAbort.signal.aborted) break;
-        const waitMs = Number(err?.retryAfterMs || 2500);
+        const waitMs = err?.code === 'TELEGRAM_TIMEOUT' ? 1000 : Number(err?.retryAfterMs || 2500);
         logger.warn?.(`[scroll-telegram:${bot.id}] poll error (retrying in ${waitMs}ms):`, err?.message || err);
         await sleep(waitMs);
       }

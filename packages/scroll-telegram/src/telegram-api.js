@@ -15,7 +15,11 @@ export function createTelegramApi({
   async function call(method, payload = null, { signal = null, timeoutMs: reqTimeout = timeoutMs } = {}) {
     const url = `${base}/bot${token}/${method}`;
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), reqTimeout);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      ctrl.abort();
+    }, reqTimeout);
     if (typeof timer.unref === 'function') timer.unref();
     const onExternalAbort = () => ctrl.abort();
     if (signal) {
@@ -44,6 +48,15 @@ export function createTelegramApi({
         throw err;
       }
       return json.result;
+    } catch (err) {
+      if (timedOut && !signal?.aborted) {
+        const te = new Error(`telegram_${method}_timeout_${reqTimeout}ms`);
+        te.name = 'TimeoutError';
+        te.code = 'TELEGRAM_TIMEOUT';
+        te.retryable = true;
+        throw te;
+      }
+      throw err;
     } finally {
       clearTimeout(timer);
       if (signal) signal.removeEventListener('abort', onExternalAbort);

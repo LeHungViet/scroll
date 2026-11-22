@@ -793,7 +793,58 @@ async function run() {
     );
   });
 
-  console.log(`\nALL ${passed}/8 §51 Smart Alerts gates PASSED!`);
+  // ── T9: HTML Card Formatting, XSS Escaping, & Duplicate-Due Suppression ──
+  await test('T9: HTML card format escapes untrusted markup, deduplicates deadline, and cleans link noise', () => {
+    const dir = tmpDir();
+    const ledger = createAlertLedger({ stateDir: dir, shadowMode: false, clock: () => DAY_10AM });
+    const controller = createAlertsController({
+      ledger,
+      ownerIds: ['1330502578'],
+      format: 'html',
+      tz: 'Asia/Ho_Chi_Minh',
+    });
+
+    const ing = ledger.ingestSignal({
+      signalId: 'html_cal_1',
+      source: 'telegram_group',
+      isGroup: true,
+      containerId: '-9001',
+      containerTitle: 'Product <script>x</script> < 5 & Ops',
+      category: 'group_blocker_or_calendar',
+      stage: 'meeting_confirmed',
+      senderTrust: 'internal',
+      summary: 'Coffee sync at 16:00 22/11 (Alice & Bob) - missing on Google Calendar',
+      quote: 'Alice: Meet at 4pm near park | Member: https://evil.xyz/phish | Member: <a href="http://steal.io">click</a> ok',
+      deadlineAt: '2026-11-22T16:00:00+07:00',
+      frozenAction: {
+        tool: 'calendar_create_event',
+        args: { eventId: 'scrollalert999', summary: 'Coffee sync' },
+        label: 'Coffee sync (16:00 22/11)',
+        buttonLabel: 'Create Calendar',
+      },
+      occurredAt: DAY_10AM,
+      observedAt: DAY_10AM,
+    });
+
+    const card = controller.renderCaseCard(ing.case);
+    assert.equal(card.parseMode, 'HTML');
+    assert.ok(card.text.includes('<b>Calendar Reminder - Product x &lt; 5 &amp; Ops</b>'), `unexpected header: ${card.text}`);
+    assert.ok(card.text.includes('<blockquote>'), 'HTML card should render quote inside blockquote');
+    assert.ok(!card.text.includes('<script>'), 'raw script tags must never survive');
+    assert.ok(!card.text.includes('<a '), 'injected anchor tags must never survive');
+    assert.ok(!card.text.includes('evil.xyz'), 'phishing domain must be stripped');
+    assert.ok(!card.text.includes('[link-removed]'), 'link-only noise segment should be cleaned out');
+    assert.ok(!card.text.includes('Due:'), 'duplicate deadline already in summary must be omitted');
+    assert.ok(card.text.includes('<i>Tap below to add this event to Google Calendar.</i>'));
+
+    // Digest card also returns parseMode: HTML and escapes ampersands cleanly
+    const digest = controller.renderDigestCard([ing.case]);
+    assert.equal(digest.parseMode, 'HTML');
+    assert.ok(digest.text.includes('<b>Smart Alerts Digest</b> (1)'));
+    assert.ok(digest.text.includes('&amp;'));
+  });
+
+  console.log(`\nALL ${passed}/9 §51 Smart Alerts gates PASSED!`);
 }
 
 run().catch((err) => {
