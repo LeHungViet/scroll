@@ -989,8 +989,15 @@ Conversational voice modules (persona, affective control, human-like delivery) r
 1. **`beforeTurn()`**: returns volatile turn guidance (`<= 650` chars) appended at the **end** of the prompt after history/deliverable so the stable prefix stays cache-stable. Bare numeric sliders (`warmth: 4/5`) are rejected — plugins must translate levels into concrete behavioral wording.
 2. **`shapeOutgoing()`**: runs **after** `groundReply()` on the raw model text. `verifyClaimsInvariant(rawText, shapedText)` verifies the multiset of `(amount, code, date, link)` claims is unchanged; any perturbation reverts and holds the reply. Outbox approvals bind to `shapedHash`.
 
-### 43.4 Reply grounding (principal sources only)
-`groundReply()` checks every amount, product code, date, and link in an external reply against **principal-authored sources only** (`collectPrincipalSources`: retrieved `knowledge/` chunks, `USER.md` `May say on behalf`, tool outputs — never customer messages). It also verifies same-line `code <-> amount` pairs (`pair_mismatch`) and holds unverified high-risk claim classes (`percent`, `time`, `relative_date`, `inventory`, `written_number`) for human review.
+### 43.4 Reply grounding (principal sources only · 3-tier `grounding_mode` in v2.5.3)
+`groundReply()` checks every amount, product code, date, and link in an external reply against **principal-authored sources only** (`collectPrincipalSources`: retrieved `knowledge/` chunks, `USER.md` `May say on behalf`, verified tool outputs across turns in the same conversation — never unverified user messages). It also verifies same-line `code <-> amount` pairs (`pair_mismatch`) and holds unverified high-risk claim classes (`percent`, `time`, `relative_date`, `inventory`, `written_number`) for human review.
+
+`IDENTITY.md` (or the runtime `groundingMode` option) may declare `grounding_mode: strict | balanced | advisory`:
+- **`strict`** *(default for 1-on-1 external guest DMs and `speaks_as: org` customer-service bots)*: holds on any unverified amount, code, date, link, pair mismatch, or hold trigger.
+- **`balanced`** *(default for `speaks_as: self` / `owner` assistants and teammates in group rooms)*: holds on unverified external URLs, conflicting `code <-> amount` pairs, and unapproved discount percentage promises while logging casual dates/times/conversational numbers as advisory telemetry.
+- **`advisory`** *(for owner-declared `trustedRooms`)*: records full grounding telemetry without holding prose, while keeping the §42 Privacy Wall (`# About` / DM memory isolation) and §21–§22 Tool Risk & Action Grounding walls strictly enforced.
+
+Interactive chat runtimes support optional bounded `groundingRetryMax` self-healing regeneration (when no mutating tool side effects have executed), and channel adapters such as `@agentpro/scroll-telegram` enforce a Zero-Leak Group Shield that routes held/error diagnostics privately to the verified owner DM rather than posting raw hold notices or technical errors into group chats.
 
 ## §44 — Large deployment knowledge retrieval, conversational mode & source-aware grounding (v1.10)
 

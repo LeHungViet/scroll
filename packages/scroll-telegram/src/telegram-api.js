@@ -78,10 +78,11 @@ export function createTelegramApi({
         limit,
         allowed_updates: allowedUpdates,
       }, { timeoutMs: Math.max(timeoutMs, (timeout + 15) * 1000), ...(opts || {}) }),
-    sendMessage: ({ chatId, text, replyToMessageId = null, buttons = null, parseMode = null, disableNotification = false } = {}) =>
+    sendMessage: ({ chatId, text, replyToMessageId = null, messageThreadId = null, buttons = null, parseMode = null, disableNotification = false } = {}) =>
       call('sendMessage', {
         chat_id: chatId,
         text: String(text || ''),
+        ...(messageThreadId != null ? { message_thread_id: Number(messageThreadId) } : {}),
         ...(replyToMessageId ? { reply_parameters: { message_id: Number(replyToMessageId), allow_sending_without_reply: true } } : {}),
         ...(buttons ? { reply_markup: toInlineKeyboard(buttons) } : {}),
         ...(parseMode ? { parse_mode: parseMode } : {}),
@@ -103,8 +104,12 @@ export function createTelegramApi({
         throw err;
       }
     },
-    sendChatAction: ({ chatId, action = 'typing' } = {}) =>
-      call('sendChatAction', { chat_id: chatId, action }).catch(() => null),
+    sendChatAction: ({ chatId, action = 'typing', messageThreadId = null } = {}) =>
+      call('sendChatAction', {
+        chat_id: chatId,
+        action,
+        ...(messageThreadId != null ? { message_thread_id: Number(messageThreadId) } : {}),
+      }).catch(() => null),
     setMessageReaction: ({ chatId, messageId, emoji, isBig = false } = {}) =>
       call('setMessageReaction', {
         chat_id: chatId,
