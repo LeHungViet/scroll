@@ -20,6 +20,7 @@ import {
   matchesOwnerDelegationPhrase,
   createLongTaskRunner,
   createAdminController,
+  createApprovalStore,
   ADMIN_CALLBACK_NAMESPACE,
 } from '@agentpro/scroll/chat';
 import { createTelegramApi } from './telegram-api.js';
@@ -122,14 +123,17 @@ function loadDotEnvFile(envFile) {
   return loaded;
 }
 
-function readOffset(file) {
-  try {
-    if (!fs.existsSync(file)) return null;
-    const j = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return Number.isSafeInteger(j.offset) ? j.offset : null;
-  } catch {
-    return null;
+function readOffset(file, fallbackFile = null) {
+  for (const candidate of [file, fallbackFile].filter(Boolean)) {
+    try {
+      if (!fs.existsSync(candidate)) continue;
+      const j = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+      if (Number.isSafeInteger(j.offset)) return j.offset;
+    } catch {
+      // try fallback
+    }
   }
+  return null;
 }
 
 function writeOffset(file, offset) {
@@ -207,6 +211,7 @@ export async function createTelegramFleetDaemon(config = {}, {
 
   const ownerIds = (config.ownerIds || []).map(String);
   const authStore = createAuthStore({ filePath: path.join(stateDir, 'auth.json') });
+  const approvalStore = createApprovalStore({ dir: path.join(stateDir, 'approvals') });
   const workerPool = createWorkerPool({ maxConcurrent: Number(config.maxWorkers || 3) });
 
   let sharedCodexClient = null;
@@ -370,29 +375,63 @@ export async function createTelegramFleetDaemon(config = {}, {
   }
 
   async function deliverScheduledJob(job) {
-    const bot = bots.get(job.agentName) || [...bots.values()][0];
+    for (const h of pluginHooks) {
+      if (typeof h.onScheduledJob === 'function') {
+        const res = await h.onScheduledJob({ job, bots, scheduler, adminController, logger });
+        if (res && res.handled) return res;
+      }
+    }
+    const bot = (job.botId && bots.get(job.botId))
+      || (job.metadata?.botId && bots.get(job.metadata.botId))
+      || (job.agentName && (bots.get(job.agentName) || [...bots.values()].find((b) => b.agentName === job.agentName)))
+      || [...bots.values()][0];
     if (!bot || bot.paused || adminController.globalPaused) return { skipped: true };
     const targetChatId = String(job.targetChatId || bot.ownerIds?.[0] || ownerIds[0] || '').trim();
     if (!targetChatId) return { skipped: true, reason: 'no_target_chat' };
     const isGroupJob = Boolean(job.metadata?.isGroup) || targetChatId.startsWith('-');
     const isOwnerTarget = !isGroupJob && bot.ownerSet.has(targetChatId);
-    const sender = isOwnerTarget
-      ? { id: targetChatId, channelId: `tg:${targetChatId}`, name: 'Owner' }
-      : null;
-    const participants = isGroupJob
-      ? [{ id: 'group-member', channelId: 'tg:group-unknown', name: 'Member' }]
-      : (sender ? [sender] : null);
-    const turn = await bot.runtime.sendTurn({
-      conversationId: targetChatId,
-      text: job.prompt || job.name,
-      sender,
-      participants,
-      isGroup: isGroupJob,
-      channel: 'telegram',
-      skipMemoryWrite: job.metadata?.writeMemory !== true,
-      model: bot.model,
-      effort: bot.effort,
-    });
+
+    let turn;
+    if (job.metadata?.generateWithLlm === false) {
+      const plain = String(job.prompt || job.name || '').trim();
+      turn = { text: plain, bubbles: plain ? [plain] : [] };
+    } else {
+      const sender = isOwnerTarget
+        ? { id: targetChatId, channelId: `tg:${targetChatId}`, name: 'Owner' }
+        : null;
+      const participants = isGroupJob
+        ? [{ id: 'group-member', channelId: 'tg:group-unknown', name: 'Member' }]
+        : (sender ? [sender] : null);
+      const convId = job.metadata?.isolatedSession ? `cron:${job.id}` : targetChatId;
+      turn = await bot.runtime.sendTurn({
+        conversationId: convId,
+        text: job.prompt || job.name,
+        sender,
+        participants,
+        isGroup: isGroupJob,
+        channel: 'telegram',
+        skipMemoryWrite: job.metadata?.writeMemory !== true,
+        model: job.metadata?.model || bot.model,
+        effort: job.metadata?.effort || bot.effort,
+        ...(Array.isArray(job.metadata?.toolsAllow) ? { toolsAllow: job.metadata.toolsAllow } : {}),
+      });
+    }
+
+    const combinedText = (Array.isArray(turn?.bubbles) && turn.bubbles.length ? turn.bubbles.join('\n') : String(turn?.text || '')).trim();
+    if (!combinedText || /^NO_REPLY$/i.test(combinedText)) {
+      return { ok: true, delivered: false, silent: true, bubbles: 0 };
+    }
+
+    for (const h of pluginHooks) {
+      if (typeof h.formatScheduledReply === 'function') {
+        const formatted = await h.formatScheduledReply({ bot, job, isGroup: isGroupJob, text: combinedText, turn });
+        if (Array.isArray(formatted) && formatted.length) {
+          turn = { ...turn, text: formatted.join('\n'), bubbles: formatted };
+          break;
+        }
+      }
+    }
+
     const delivered = await deliverSafeReply(bot, {
       chatId: targetChatId,
       isGroup: isGroupJob,
@@ -400,6 +439,7 @@ export async function createTelegramFleetDaemon(config = {}, {
       threadId: job.metadata?.threadId ?? null,
       turn,
     });
+    bot.stats.cronsDelivered = (bot.stats.cronsDelivered || 0) + 1;
     return { ok: true, ...delivered };
   }
 
@@ -515,7 +555,26 @@ export async function createTelegramFleetDaemon(config = {}, {
       }
     }
 
-    const trig = matchesTrigger({ bot, msg, text: rawText });
+    const burstKey = `${bot.id}:${chatId}:${threadId ?? 'root'}:${senderId || 'anon'}`;
+    let trig = matchesTrigger({ bot, msg, text: rawText });
+    // Group Follow-Up Burst Coalescing: when the SAME sender already triggered this bot in this
+    // group/thread and sends rapid follow-up lines while the debounce window is still open (without
+    // re-tagging @bot or re-replying on every line), coalesce them into the same burst — unless the
+    // follow-up explicitly replies to someone else or @mentions another bot.
+    if (!trig.trigger && isGroup && senderId && bot.debouncer?.hasPending?.(burstKey)) {
+      const replyAuthorId = msg.reply_to_message?.from?.id != null ? String(msg.reply_to_message.from.id) : null;
+      const replyingToOther = Boolean(
+        replyAuthorId
+        && replyAuthorId !== String(bot.botUserId || '')
+        && replyAuthorId !== String(senderId)
+      );
+      const otherBotMentions = [...String(rawText || '').matchAll(/@([A-Za-z0-9_]+bot)\b/gi)]
+        .map((m) => m[1].toLowerCase())
+        .filter((u) => !bot.username || u !== String(bot.username).toLowerCase());
+      if (!replyingToOther && otherBotMentions.length === 0) {
+        trig = { trigger: true, reason: 'burst_followup' };
+      }
+    }
     if (!trig.trigger) {
       if (bot.downloadUntriggeredGroupMedia && mediaMeta.length) {
         await extractAttachments(bot, msg).catch(() => {});
@@ -578,7 +637,6 @@ export async function createTelegramFleetDaemon(config = {}, {
       groupGrants.grant({ roomId: chatId, isGroup: true, grantedBy: senderId, ttlMinutes: 60, note: rawText.slice(0, 120) });
     }
 
-    const burstKey = `${bot.id}:${chatId}:${threadId ?? 'root'}:${senderId || 'anon'}`;
     await bot.debouncer.push(burstKey, {
       chatId,
       isGroup,
@@ -739,10 +797,13 @@ export async function createTelegramFleetDaemon(config = {}, {
     const botObj = {
       id: bCfg.id,
       agentName: bCfg.agentName || bCfg.id,
+      deploymentDir: path.resolve(bCfg.deploymentDir || process.cwd()),
+      config: bCfg,
       username: bCfg.username || null,
       botUserId: null,
       canReadAllGroupMessages: null,
       api,
+      approvalStore,
       model: bCfg.model || null,
       effort: bCfg.effort || null,
       groupPolicy: bCfg.groupPolicy || 'mention',
@@ -756,7 +817,8 @@ export async function createTelegramFleetDaemon(config = {}, {
       ownerIds: botOwnerIds,
       ownerSet: new Set(botOwnerIds),
       offsetFile: path.join(stateDir, `offset-${bCfg.id}.json`),
-      stats: { turns: 0, errors: 0 },
+      legacyOffsetFile: path.join(stateDir, 'offsets', `${bCfg.id}.json`),
+      stats: { turns: 0, errors: 0, cronsDelivered: 0 },
       runtime: null,
       tools: null,
       debouncer: null,
@@ -765,7 +827,7 @@ export async function createTelegramFleetDaemon(config = {}, {
 
     const runtime = await createScrollChatRuntime({
       agentName: botObj.agentName,
-      deploymentDir: path.resolve(bCfg.deploymentDir || process.cwd()),
+      deploymentDir: botObj.deploymentDir,
       stateDir,
       accountId: bCfg.accountId || bCfg.id,
       ownerIds: botOwnerIds,
@@ -773,6 +835,7 @@ export async function createTelegramFleetDaemon(config = {}, {
       model: botObj.model,
       effort: botObj.effort,
       authStore,
+      approvalStore,
       scheduler,
       workerPool,
       enableMemory: bCfg.enableMemory !== false,
@@ -795,8 +858,9 @@ export async function createTelegramFleetDaemon(config = {}, {
       longTasks.registerTools({ tools: runtime.tools, bot: botObj, ownerIds: botOwnerIds, groupGrants });
     }
     botObj.debouncer = createMessageDebouncer({
-      quietMs: Number(bCfg.debounceQuietMs ?? 1200),
-      maxWaitMs: Number(bCfg.debounceMaxWaitMs ?? 4500),
+      quietMs: Number(bCfg.debounceQuietMs ?? config.debounceQuietMs ?? 2500),
+      maxWaitMs: Number(bCfg.debounceMaxWaitMs ?? config.debounceMaxWaitMs ?? 12_000),
+      fastPathPattern: bCfg.debounceFastPathPattern ?? config.debounceFastPathPattern ?? /\b(?:urgent|asap|right\s+now|immediately)\b/iu,
       onFlush: (item) => processBurst(botObj, item),
       onError: (err, key) => logger.error?.(`[scroll-telegram:${botObj.id}] debouncer flush error (${key}):`, err?.message || err),
     });
@@ -811,11 +875,14 @@ export async function createTelegramFleetDaemon(config = {}, {
       stateDir,
       bots,
       authStore,
+      approvalStore,
       scheduler,
       workerPool,
       groupGrants,
       longTasks,
       adminController,
+      adminUi,
+      sharedCodexClient,
       logger,
     });
     if (hook && typeof hook === 'object') pluginHooks.push(hook);
@@ -866,7 +933,7 @@ export async function createTelegramFleetDaemon(config = {}, {
   }
 
   async function pollBot(bot) {
-    let offset = readOffset(bot.offsetFile);
+    let offset = readOffset(bot.offsetFile, bot.legacyOffsetFile);
     bot.pollAbort = new AbortController();
     while (!stopped && !bot.pollAbort.signal.aborted) {
       try {
@@ -949,6 +1016,13 @@ export async function createTelegramFleetDaemon(config = {}, {
       pollBot(bot).catch(() => {});
     }
     scheduler.start();
+    for (const h of pluginHooks) {
+      if (typeof h.onStart === 'function') {
+        try { await h.onStart({ bots, scheduler, config, stateDir, logger }); } catch (err) {
+          logger.warn?.('[scroll-telegram] plugin onStart warning:', err?.message || err);
+        }
+      }
+    }
     const maintMs = Number(config.memoryMaintenanceIntervalMs ?? 30 * 60_000);
     if (maintMs > 0) {
       maintenanceTimer = setInterval(() => {
@@ -970,6 +1044,11 @@ export async function createTelegramFleetDaemon(config = {}, {
 
   async function stop() {
     stopped = true;
+    for (const h of pluginHooks) {
+      if (typeof h.onStop === 'function') {
+        try { await h.onStop({ bots, scheduler, logger }); } catch { /* isolate */ }
+      }
+    }
     if (maintenanceTimer) {
       clearInterval(maintenanceTimer);
       maintenanceTimer = null;

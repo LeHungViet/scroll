@@ -27,6 +27,7 @@ import {
   collectPrincipalSources,
   buildProviderMessages,
 } from '../index.js';
+import { verifyClaimsInvariant, extractClaims } from '../lib/grounding.js';
 import { createMessageDebouncer } from '../lib/chat-sdk/debouncer.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -1257,6 +1258,158 @@ await t('Mutation Gate (E11): 9 planted bugs across grounding, chat-session, mem
   // Mutant 8 & 9: Verify skipMemoryWrite cron guard & passive observeMessage anchors in telegram-daemon.js!
   assert.ok(rawDaemon.includes('skipMemoryWrite: job.metadata?.writeMemory !== true'), 'cron skipMemoryWrite anchor present');
   assert.ok(rawDaemon.includes('bot.runtime?.memoryTracker?.observeMessage?.({'), 'passive group observer anchor present');
+  assert.ok(rawDaemon.includes("trig = { trigger: true, reason: 'burst_followup' };"), 'group follow-up burst coalescing anchor present');
+});
+
+// ── 12. Scenarios S37-S39: Group Follow-Up Burst Coalescing, Plugin System Cron + NO_REPLY, Range-vs-Date Invariant ──
+await t('S37-S39: Group 3-message rapid burst coalescing, plugin onScheduledJob + NO_REPLY + onStart/onStop, and range 2-3 not misparsed as date', async () => {
+  // S39: Bare hyphenated ranges ("2-3 options", "1-2 days") must NOT be misparsed as dates (March 2),
+  // while real ISO / DMY dates ("2026-11-22", "22-11-2026", "22/11") still extract cleanly!
+  const invRange = verifyClaimsInvariant('We have 2–3 options for you.', 'We have 2-3 options for you.');
+  assert.equal(invRange.ok, true, `numeric range 2–3 -> 2-3 must stay claim-invariant, got: ${JSON.stringify(invRange)}`);
+  const realDate = extractClaims('Meeting on 22-11-2026 and 22/11 and 2026-11-23');
+  assert.equal(realDate.filter((c) => c.kind === 'date').length, 3, 'real dates with year or slash must still extract');
+
+  const dir = path.join(tmpRoot, 's37-burst-cron');
+  fs.mkdirSync(dir, { recursive: true });
+  scaffold('burstbot', dir, { preset: 'assistant' });
+  fs.writeFileSync(path.join(dir, 'USER.md'), VALID_USER_MD);
+
+  const tg = makeMockTelegramFetch();
+  const seenPrompts = [];
+  let pluginStarted = false;
+  let pluginStopped = false;
+  let customCronRan = false;
+  let replyMode = 'normal';
+
+  const daemon = await createTelegramFleetDaemon({
+    stateDir: path.join(tmpRoot, 's37-state'),
+    ownerIds: ['1001'],
+    bots: [{
+      id: 'burstbot',
+      agentName: 'burstbot',
+      username: 'burst_bot',
+      deploymentDir: dir,
+      token: 'TEST_TOKEN_BURST',
+      provider: 'mock',
+      debounceQuietMs: 120,
+      debounceMaxWaitMs: 600,
+      delayScale: 0,
+    }],
+  }, {
+    fetchImpl: tg.fetchImpl,
+    logger: { info() {}, warn() {}, error() {} },
+    plugins: [
+      async ({ approvalStore, sharedCodexClient }) => {
+        assert.ok(approvalStore && typeof approvalStore.issue === 'function', 'plugin receives shared approvalStore');
+        assert.equal(sharedCodexClient, null, 'mock provider has null sharedCodexClient');
+        return {
+          onStart() { pluginStarted = true; },
+          onStop() { pluginStopped = true; },
+          async onScheduledJob({ job }) {
+            if (job.metadata?.systemAction === 'custom_system_tick') {
+              customCronRan = true;
+              return { handled: true, ticked: true };
+            }
+            return null;
+          },
+        };
+      },
+    ],
+    providerFactory: async () => ({
+      name: 'mock',
+      model: 'mock-1',
+      ready: true,
+      async generate(prompt) {
+        seenPrompts.push(String(prompt || ''));
+        if (replyMode === 'no_reply') return { text: 'NO_REPLY', usage: {} };
+        return { text: 'Got all three points clearly.', usage: {} };
+      },
+    }),
+  });
+
+  const bot = daemon.bots.get('burstbot');
+  bot.username = 'burst_bot';
+  bot.botUserId = 9099;
+
+  try {
+    // S37: User sends 3 rapid group bubbles: msg 1 replies to bot, msgs 2 & 3 have NO reply and NO @mention!
+    // Meanwhile another member sends a side message and the sender replies to another human -> neither hijacks the burst!
+    await daemon.handleIncomingMessage(bot, {
+      message_id: 501,
+      chat: { id: -7700, type: 'supergroup', title: 'Tax Ops' },
+      from: { id: 1001, first_name: 'Alex' },
+      reply_to_message: { message_id: 500, from: { id: 9099, is_bot: true }, text: 'Any payroll yet?' },
+      text: 'Point 1: no payroll paid yet',
+    });
+    await daemon.handleIncomingMessage(bot, {
+      message_id: 502,
+      chat: { id: -7700, type: 'supergroup', title: 'Tax Ops' },
+      from: { id: 1001, first_name: 'Alex' },
+      text: 'Point 2: company is not active yet',
+    });
+    // Another member chatting in parallel must NOT enter Alex's burst
+    await daemon.handleIncomingMessage(bot, {
+      message_id: 503,
+      chat: { id: -7700, type: 'supergroup', title: 'Tax Ops' },
+      from: { id: 2002, first_name: 'Sam' },
+      text: 'unrelated side chat from Sam',
+    });
+    // Alex explicitly replying to Sam must NOT enter bot's burst
+    await daemon.handleIncomingMessage(bot, {
+      message_id: 504,
+      chat: { id: -7700, type: 'supergroup', title: 'Tax Ops' },
+      from: { id: 1001, first_name: 'Alex' },
+      reply_to_message: { message_id: 503, from: { id: 2002, is_bot: false }, text: 'unrelated side chat from Sam' },
+      text: 'replying to Sam directly',
+    });
+    await daemon.handleIncomingMessage(bot, {
+      message_id: 505,
+      chat: { id: -7700, type: 'supergroup', title: 'Tax Ops' },
+      from: { id: 1001, first_name: 'Alex' },
+      text: 'Point 3: when can we file a zero return?',
+    });
+    await bot.debouncer.flushAll();
+
+    assert.equal(seenPrompts.length, 1, '3 rapid messages from same sender must coalesce into 1 single turn');
+    assert.ok(seenPrompts[0].includes('Point 1: no payroll paid yet'), 'burst includes point 1');
+    assert.ok(seenPrompts[0].includes('Point 2: company is not active yet'), 'burst includes follow-up point 2 without re-mention');
+    assert.ok(seenPrompts[0].includes('Point 3: when can we file a zero return?'), 'burst includes follow-up point 3 without re-mention');
+    assert.ok(!seenPrompts[0].includes('unrelated side chat'), 'other member chat must NOT enter burst');
+    assert.ok(!seenPrompts[0].includes('replying to Sam directly'), 'reply to another human must NOT enter bot burst');
+
+    // S38: Plugin onScheduledJob + silent NO_REPLY suppression + onStart/onStop lifecycle
+    const sysRes = await daemon.deliverScheduledJob({
+      id: 'sys-tick',
+      name: 'System tick',
+      agentName: 'burstbot',
+      targetChatId: '1001',
+      prompt: 'tick',
+      metadata: { systemAction: 'custom_system_tick', generateWithLlm: false },
+    });
+    assert.equal(sysRes.handled, true);
+    assert.equal(customCronRan, true);
+
+    const beforeNoReply = tg.sentMessages.length;
+    replyMode = 'no_reply';
+    const silentRes = await daemon.deliverScheduledJob({
+      id: 'quiet-news',
+      name: 'Daily News',
+      agentName: 'burstbot',
+      targetChatId: '-7700',
+      prompt: 'Check news, output NO_REPLY if nothing major.',
+      metadata: { isolatedSession: true },
+    });
+    assert.equal(silentRes.silent, true, 'NO_REPLY cron must stay completely silent');
+    assert.equal(tg.sentMessages.length, beforeNoReply, 'NO_REPLY must send 0 Telegram messages');
+    assert.ok(bot.runtime.getHistory('cron:quiet-news').length >= 1, 'isolatedSession cron uses cron:<id> conversation key');
+
+    await daemon.start();
+    assert.equal(pluginStarted, true, 'onStart hook invoked on daemon.start()');
+  } finally {
+    await daemon.stop();
+    assert.equal(pluginStopped, true, 'onStop hook invoked on daemon.stop()');
+  }
 });
 
 fs.rmSync(tmpRoot, { recursive: true, force: true });

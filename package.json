@@ -1,6 +1,6 @@
 {
   "name": "@agentpro/scroll",
-  "version": "2.5.4",
+  "version": "2.5.5",
   "description": "SCROLL 2.5 -- zero-dependency harness for agentic loops and interactive chat sessions. Build AI agents as folders, not code: filesystem-native, 4-provider parity, portable Tool Retriever, OS-sandboxed tools, Streamable HTTP + stdio MCP, OAuth/Codex auth, and timezone-aware scheduling.",
   "main": "index.js",
   "types": "./types/index.d.ts",
