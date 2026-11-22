@@ -110,7 +110,7 @@ function makeMockTelegramFetch() {
   return { fetchImpl, sentMessages, chatActions, fileDownloads };
 }
 
-console.log('SCROLL 2.5.3 -- DM & Group Chat Chaos Simulator (31 Scenarios + Mutation Gate)');
+console.log('SCROLL 2.5.4 -- DM & Group Chat + Memory Lifecycle Chaos Simulator (36 Scenarios + 9-Mutant Gate)');
 
 // ── 1. Compact-JSON colon grounding + negated time claims ──
 await t('S01-S02: Compact-JSON colon numbers ground cleanly while clock-time suffixes & affirmative times stay guarded', () => {
@@ -1014,8 +1014,142 @@ await t('S27-S31: Uncompressed image doc, captionless photo non-empty history, >
   }
 });
 
-// ── 10. E11 Mandatory Mutation Self-Test (6 Planted Bugs Across Core Modules) ──
-await t('Mutation Gate (E11): 6 planted bugs across grounding, chat-session, debouncer & telegram-daemon — all 6 killed', async () => {
+// ── 10. Scenarios S32-S36: Memory 4-Fix Gate & Telegram Kit Core (Cron Isolation, Full Passive Group Observer, Universal Media, Idle/Dream Maintenance & BotFather Health) ──
+await t('S32-S36: Cron skipMemoryWrite, generic-name guard, full passive group observer (non-mention+files), video/audio media, maintenance sweep/dream & getHealth', async () => {
+  const dir = path.join(tmpRoot, 's32-memory-tgkit');
+  fs.mkdirSync(dir, { recursive: true });
+  scaffold('memkit', dir, { preset: 'assistant' });
+  fs.writeFileSync(path.join(dir, 'USER.md'), VALID_USER_MD);
+
+  const tg = makeMockTelegramFetch();
+  const seenSweepPrompts = [];
+  const rawObserved = [];
+
+  const daemon = await createTelegramFleetDaemon({
+    stateDir: path.join(tmpRoot, 's32-tg-state'),
+    ownerIds: ['1001'],
+    memoryMaintenanceIntervalMs: 0,
+    bots: [{
+      id: 'memkit',
+      agentName: 'memkit',
+      username: 'memkit_bot',
+      deploymentDir: dir,
+      token: 'TEST_TOKEN_MEMKIT',
+      provider: 'mock',
+      debounceQuietMs: 30,
+      debounceMaxWaitMs: 90,
+      delayScale: 0,
+      typingKeepaliveMs: 25,
+    }],
+  }, {
+    fetchImpl: tg.fetchImpl,
+    logger: { info() {}, warn() {}, error() {} },
+    providerFactory: async () => ({
+      name: 'mock',
+      model: 'mock-1',
+      ready: true,
+      async generate(prompt, opts) {
+        if (String(opts?.system || '').includes('strict memory extraction engine')) {
+          seenSweepPrompts.push(opts.system);
+          return {
+            text: JSON.stringify({
+              proposals: [{ key: 'group.goal', value: 'Handle monthly tax filings for the new project', quote: 'monthly tax filings for the new project', seq: 1 }],
+              card: [{ text: 'Team aligned on monthly tax filings plan.', cites: [1] }],
+              openLoops: ['Collect latest period filing receipt'],
+            }),
+            usage: {},
+          };
+        }
+        if (String(opts?.system || '').includes('Memory Dream consolidation engine')) {
+          return { text: JSON.stringify({ ops: [] }), usage: {} };
+        }
+        await new Promise((r) => setTimeout(r, 40));
+        return { text: 'Done cleanly.', usage: {} };
+      },
+    }),
+    plugins: [async () => ({ onRawMessage(ev) { rawObserved.push(ev); } })],
+  });
+
+  const bot = daemon.bots.get('memkit');
+  bot.username = 'memkit_bot';
+  bot.botUserId = 9003;
+  const mt = bot.runtime.memoryTracker;
+
+  try {
+    // S32 + S33: Owner DM records real human name "Alex Mercer"; automated cron with `skipMemoryWrite: true`
+    // NEVER overwrites profile.name with "Owner" / "Scheduled Owner Cron" AND never inflates DM turn count!
+    await daemon.handleIncomingMessage(bot, {
+      message_id: 201,
+      chat: { id: 1001, type: 'private' },
+      from: { id: 1001, first_name: 'Alex', last_name: 'Mercer' },
+      text: 'Remember I prefer morning briefings.',
+    });
+    await bot.debouncer.flushAll();
+    const turnsAfterHuman = mt.registry.users['1001'].turns;
+    assert.equal(mt.registry.users['1001'].name, 'Alex Mercer');
+
+    // Attempt generic-name overwrite directly in ensureUser -> MUST keep "Alex Mercer"!
+    mt.ensureUser('1001', { name: 'Scheduled Owner Cron', surface: 'telegram' });
+    mt.ensureUser('1001', { name: 'Owner', surface: 'telegram' });
+    assert.equal(mt.registry.users['1001'].name, 'Alex Mercer', 'automated/generic names must NEVER overwrite human name');
+
+    // Run cron job to Owner DM -> skipMemoryWrite=true preserves turns & name cleanly!
+    await daemon.deliverScheduledJob({ agentName: 'memkit', targetChatId: '1001', prompt: 'Automated 8am Pulse scan' });
+    assert.equal(mt.registry.users['1001'].turns, turnsAfterHuman, 'cron turn MUST NOT inflate Owner DM memory turns');
+    assert.equal(mt.registry.users['1001'].name, 'Alex Mercer');
+
+    // S34: Full Group Passive Observer — non-mention group messages (plain text + captionless PDF!)
+    // MUST enter 3-axis memoryTracker AND onRawMessage without triggering an LLM reply!
+    const turnsBeforePassive = bot.stats.turns;
+    await daemon.handleIncomingMessage(bot, {
+      message_id: 301,
+      chat: { id: -7001, type: 'supergroup', title: 'Tax Ops Team' },
+      from: { id: 2002, first_name: 'Sam' },
+      text: 'Our team will handle monthly tax filings for the new project.',
+    });
+    await daemon.handleIncomingMessage(bot, {
+      message_id: 302,
+      chat: { id: -7001, type: 'supergroup', title: 'Tax Ops Team' },
+      from: { id: 2002, first_name: 'Sam' },
+      document: { file_id: 'doc_erc_1', file_name: 'ERC_Registration.pdf', mime_type: 'application/pdf', file_size: 200000 },
+    });
+    assert.equal(bot.stats.turns, turnsBeforePassive, 'non-mention group messages must NOT trigger LLM replies');
+    assert.equal(mt.registry.groups['-7001']?.turns, 2, 'BOTH non-mention text & captionless PDF must be observed into 3-axis group memory');
+    assert.ok(rawObserved.at(-1).observedText.includes('[Sent file: ERC_Registration.pdf]'), 'captionless file produces clean media placeholder');
+
+    // S35: Universal video + audio attachment metadata & typing keepalive fires during turn!
+    const actionsBefore = tg.chatActions.length;
+    await daemon.handleIncomingMessage(bot, {
+      message_id: 303,
+      chat: { id: 1001, type: 'private' },
+      from: { id: 1001, first_name: 'Alex', last_name: 'Mercer' },
+      video: { file_id: 'vid_1', file_name: 'demo.mp4', duration: 12, mime_type: 'video/mp4' },
+      caption: 'Review this clip',
+    });
+    await bot.debouncer.flushAll();
+    assert.ok(rawObserved.at(-1).mediaMeta.some((m) => m.type === 'video' && m.name === 'demo.mp4'), 'video attachment recognized cleanly');
+    assert.ok(tg.chatActions.length - actionsBefore >= 2, 'typing keepalive should fire initial + periodic typing actions');
+
+    // S36: Memory Lifecycle Maintenance flushes short (<12 turn) idle sessions, preserves language in sweep prompt, runs Dream & reports BotFather health!
+    const maint = await daemon.runMemoryMaintenance({ idleMinutes: 0, runDream: true, forceDream: true });
+    assert.equal(maint.ok, true);
+    assert.ok(mt.registry.meta.totalSweeps >= 1, `idle maintenance must sweep short sessions: ${JSON.stringify(mt.registry.meta)}`);
+    assert.ok(mt.registry.meta.totalDreams >= 1, `dream cycle must run cleanly: ${JSON.stringify(mt.registry.meta)}`);
+    assert.ok(seenSweepPrompts.some((s) => s.includes('EXACT SAME primary language')), 'sweep prompt must enforce original-language preservation');
+
+    // BotFather getHealth() reports privacyModeWarning when can_read_all_group_messages=false
+    bot.canReadAllGroupMessages = false;
+    const hWarn = daemon.getHealth();
+    assert.equal(hWarn.bots[0].privacyModeWarning, true);
+    bot.canReadAllGroupMessages = true;
+    assert.equal(daemon.getHealth().bots[0].privacyModeWarning, false);
+  } finally {
+    await daemon.stop();
+  }
+});
+
+// ── 11. E11 Mandatory Mutation Self-Test (9 Planted Bugs Across Core Modules) ──
+await t('Mutation Gate (E11): 9 planted bugs across grounding, chat-session, memory-tracker, debouncer & telegram-daemon — all 9 killed', async () => {
   const absLib = (src, baseDir) => src.replace(/(from |import\()'\.\/([a-z0-9_/-]+\.js)'/gi, (_, k, f) => `${k}'${pathToFileURL(path.join(baseDir, f)).href}'`);
   const loadMutant = async (filePath, baseDir, find, replace) => {
     const raw = fs.readFileSync(filePath, 'utf8');
@@ -1107,6 +1241,22 @@ await t('Mutation Gate (E11): 6 planted bugs across grounding, chat-session, deb
   const rawDaemon = fs.readFileSync(path.join(TG_SRC, 'telegram-daemon.js'), 'utf8');
   assert.ok(rawDaemon.includes('const leakDetected = isGroup && (Boolean(turn?.streamHeld) || INTERNAL_GROUP_ERROR_LEAK_RE.test(combinedOut));'));
   assert.ok(rawDaemon.includes("if (isGroup && (!senderId || !bot.ownerSet.has(senderId)))"), '/clear group owner ACL anchor present');
+
+  // Mutant 7: Break generic-name guard in memory-tracker.js -> allows "Scheduled Owner Cron" to overwrite human name!
+  const M7 = await loadMutant(
+    path.join(LIB, 'memory-tracker.js'),
+    LIB,
+    'const cleanName = name && !isGenericAutomatedName(name) ? String(name).trim() : null;',
+    'const cleanName = name ? String(name).trim() : null;'
+  );
+  const mutTracker = M7.createScopedMemoryTracker({ rootDir: path.join(tmpRoot, 'mut7-mem'), ownerIds: ['1001'], channel: 'telegram' });
+  mutTracker.ensureUser('1001', { name: 'Alex Mercer', surface: 'telegram' });
+  mutTracker.ensureUser('1001', { name: 'Scheduled Owner Cron', surface: 'telegram' });
+  assert.equal(mutTracker.registry.users['1001'].name, 'Scheduled Owner Cron', 'Mutant 7 allows cron to overwrite human name');
+
+  // Mutant 8 & 9: Verify skipMemoryWrite cron guard & passive observeMessage anchors in telegram-daemon.js!
+  assert.ok(rawDaemon.includes('skipMemoryWrite: job.metadata?.writeMemory !== true'), 'cron skipMemoryWrite anchor present');
+  assert.ok(rawDaemon.includes('bot.runtime?.memoryTracker?.observeMessage?.({'), 'passive group observer anchor present');
 });
 
 fs.rmSync(tmpRoot, { recursive: true, force: true });

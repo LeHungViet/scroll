@@ -77,13 +77,27 @@ function splitTelegramChunks(text, maxLen = 4000) {
 function summarizeMediaMeta(msg) {
   const meta = [];
   if (Array.isArray(msg?.photo) && msg.photo.length) meta.push({ type: 'image' });
-  if (msg?.voice?.file_id) meta.push({ type: 'voice', fileId: msg.voice.file_id, mimeType: msg.voice.mime_type || 'audio/ogg' });
-  if (msg?.audio?.file_id) meta.push({ type: 'audio', fileId: msg.audio.file_id, name: msg.audio.file_name || 'audio', mimeType: msg.audio.mime_type || 'audio/mpeg' });
+  if (msg?.voice?.file_id) meta.push({ type: 'voice', fileId: msg.voice.file_id, duration: msg.voice.duration || null, mimeType: msg.voice.mime_type || 'audio/ogg' });
+  if (msg?.audio?.file_id) meta.push({ type: 'audio', fileId: msg.audio.file_id, name: msg.audio.file_name || 'audio', duration: msg.audio.duration || null, mimeType: msg.audio.mime_type || 'audio/mpeg' });
+  if (msg?.video?.file_id) meta.push({ type: 'video', fileId: msg.video.file_id, name: msg.video.file_name || 'video.mp4', duration: msg.video.duration || null, mimeType: msg.video.mime_type || 'video/mp4' });
+  if (msg?.video_note?.file_id) meta.push({ type: 'video', fileId: msg.video_note.file_id, name: 'video_note.mp4', duration: msg.video_note.duration || null, mimeType: 'video/mp4' });
   if (msg?.document?.file_id) {
     const isImgDoc = /^image\//i.test(msg.document.mime_type || '');
-    meta.push({ type: isImgDoc ? 'image' : 'document', fileId: msg.document.file_id, name: msg.document.file_name || 'file', mimeType: msg.document.mime_type || null });
+    meta.push({ type: isImgDoc ? 'image' : 'document', fileId: msg.document.file_id, name: msg.document.file_name || 'file', sizeBytes: msg.document.file_size || null, mimeType: msg.document.mime_type || null });
   }
   return meta;
+}
+
+function formatMediaPlaceholder(mediaMeta = []) {
+  if (!Array.isArray(mediaMeta) || !mediaMeta.length) return '';
+  return mediaMeta.map((m) => {
+    if (m.type === 'document') return `[Sent file: ${m.name || 'file'}]`;
+    if (m.type === 'image') return m.name ? `[Sent image: ${m.name}]` : '[Sent photo]';
+    if (m.type === 'voice') return '[Sent voice message]';
+    if (m.type === 'audio') return `[Sent audio: ${m.name || 'audio'}]`;
+    if (m.type === 'video') return `[Sent video: ${m.name || 'video'}]`;
+    return `[Sent ${m.type || 'attachment'}]`;
+  }).join(' ');
 }
 
 function loadDotEnvFile(envFile) {
@@ -375,6 +389,7 @@ export async function createTelegramFleetDaemon(config = {}, {
       participants,
       isGroup: isGroupJob,
       channel: 'telegram',
+      skipMemoryWrite: job.metadata?.writeMemory !== true,
       model: bot.model,
       effort: bot.effort,
     });
@@ -408,10 +423,16 @@ export async function createTelegramFleetDaemon(config = {}, {
       }
     }
     if (msg.voice?.file_id) {
-      out.push({ type: 'voice', fileId: msg.voice.file_id, mimeType: msg.voice.mime_type || 'audio/ogg' });
+      out.push({ type: 'voice', fileId: msg.voice.file_id, duration: msg.voice.duration || null, mimeType: msg.voice.mime_type || 'audio/ogg' });
     }
     if (msg.audio?.file_id) {
-      out.push({ type: 'audio', fileId: msg.audio.file_id, name: msg.audio.file_name || 'audio', mimeType: msg.audio.mime_type || 'audio/mpeg' });
+      out.push({ type: 'audio', fileId: msg.audio.file_id, name: msg.audio.file_name || 'audio', duration: msg.audio.duration || null, mimeType: msg.audio.mime_type || 'audio/mpeg' });
+    }
+    if (msg.video?.file_id) {
+      out.push({ type: 'video', fileId: msg.video.file_id, name: msg.video.file_name || 'video.mp4', duration: msg.video.duration || null, mimeType: msg.video.mime_type || 'video/mp4' });
+    }
+    if (msg.video_note?.file_id) {
+      out.push({ type: 'video', fileId: msg.video_note.file_id, name: 'video_note.mp4', duration: msg.video_note.duration || null, mimeType: 'video/mp4' });
     }
     if (msg.document?.file_id) {
       const mime = String(msg.document.mime_type || '');
@@ -452,6 +473,27 @@ export async function createTelegramFleetDaemon(config = {}, {
     const replyTo = extractReplyContext(msg);
     if (!rawText && !mediaMeta.length) return;
 
+    // 0-token Passive Observer: capture EVERY non-bot message (including non-mention group chat and
+    // captionless forwarded files/photos) into 3-axis long-term memory BEFORE trigger gating!
+    const observedText = [rawText, formatMediaPlaceholder(mediaMeta)].filter(Boolean).join(' ').trim();
+    if (observedText && !rawText.startsWith('/')) {
+      try {
+        bot.runtime?.memoryTracker?.observeMessage?.({
+          chatId,
+          chatTitle: msg.chat.title || null,
+          threadId,
+          isGroup,
+          isEdit: false,
+          senderId,
+          senderName,
+          senderUsername: msg.from?.username || null,
+          messageId: msg.message_id,
+          text: observedText,
+          surface: 'telegram',
+        });
+      } catch { /* isolate passive observer errors */ }
+    }
+
     // Allow plugins to observe every message (e.g. rolling group buffer) BEFORE downloading heavy media bytes
     for (const h of pluginHooks) {
       if (typeof h.onRawMessage === 'function') {
@@ -465,6 +507,7 @@ export async function createTelegramFleetDaemon(config = {}, {
             senderId,
             senderName,
             text: rawText,
+            observedText,
             mediaMeta,
             replyTo,
           });
@@ -553,6 +596,13 @@ export async function createTelegramFleetDaemon(config = {}, {
     if (bot.paused || adminController.globalPaused) return;
     const { chatId, isGroup, threadId = null, chatTitle, sender, text, attachments, replyTo = null, messageId, messageIds } = item;
     await bot.api.sendChatAction({ chatId, action: 'typing', messageThreadId: threadId });
+    const keepaliveMs = Number(bot.typingKeepaliveMs ?? 4000);
+    const typingTimer = keepaliveMs > 0
+      ? setInterval(() => {
+          bot.api.sendChatAction({ chatId, action: 'typing', messageThreadId: threadId }).catch(() => {});
+        }, keepaliveMs)
+      : null;
+    if (typingTimer && typeof typingTimer.unref === 'function') typingTimer.unref();
     const activeGrant = isGroup ? groupGrants.getActiveGrant(chatId) : null;
     const participants = isGroup
       ? [sender, { id: 'group-member', channelId: 'tg:group-unknown', name: 'Member' }]
@@ -598,6 +648,8 @@ export async function createTelegramFleetDaemon(config = {}, {
           text: `[${bot.id} · Error in ${where}] ${errMsg.slice(0, 400)}`,
         }).catch(() => {});
       }
+    } finally {
+      if (typingTimer) clearInterval(typingTimer);
     }
   }
 
@@ -689,12 +741,14 @@ export async function createTelegramFleetDaemon(config = {}, {
       agentName: bCfg.agentName || bCfg.id,
       username: bCfg.username || null,
       botUserId: null,
+      canReadAllGroupMessages: null,
       api,
       model: bCfg.model || null,
       effort: bCfg.effort || null,
       groupPolicy: bCfg.groupPolicy || 'mention',
       groupHeldFallback: bCfg.groupHeldFallback || config.groupHeldFallback || DEFAULT_GROUP_HELD_FALLBACK,
       downloadUntriggeredGroupMedia: Boolean(bCfg.downloadUntriggeredGroupMedia),
+      typingKeepaliveMs: Number(bCfg.typingKeepaliveMs ?? config.typingKeepaliveMs ?? 4000),
       mentionRegexes: (bCfg.mentionPatterns || []).map((p) => new RegExp(p, 'i')),
       delegationPatterns: (bCfg.delegationPatterns || []).map((p) => new RegExp(p, 'iu')),
       paused: Boolean(bCfg.paused),
@@ -840,21 +894,86 @@ export async function createTelegramFleetDaemon(config = {}, {
     }
   }
 
+  let maintenanceTimer = null;
+  const lastDreamDayByBot = new Map();
+
+  async function runMemoryMaintenance({ idleMinutes = 45, runDream = false, forceDream = false, ack = false } = {}) {
+    const perBot = {};
+    for (const bot of bots.values()) {
+      const mt = bot.runtime?.memoryTracker;
+      if (!mt || typeof mt.runMaintenance !== 'function') continue;
+      try {
+        perBot[bot.id] = await mt.runMaintenance({
+          idleMinutes,
+          runDream,
+          forceDream,
+          ack,
+          provider: bot.runtime.provider,
+          model: bot.model,
+        });
+      } catch (err) {
+        perBot[bot.id] = { ok: false, error: String(err?.message || err) };
+      }
+    }
+    return { ok: true, bots: perBot };
+  }
+
+  function getHealth() {
+    return {
+      uptimeSec: Math.round((Date.now() - startedAt) / 1000),
+      bots: [...bots.values()].map((b) => ({
+        id: b.id,
+        username: b.username,
+        groupPolicy: b.groupPolicy,
+        canReadAllGroupMessages: b.canReadAllGroupMessages,
+        privacyModeWarning: Boolean(b.groupPolicy !== 'off' && b.canReadAllGroupMessages === false),
+        memory: b.runtime?.memoryTracker?.getStats?.() || null,
+        stats: { ...b.stats },
+      })),
+    };
+  }
+
   async function start() {
     stopped = false;
     for (const bot of bots.values()) {
       const me = await bot.api.getMe();
       bot.username = me?.username || bot.username;
       bot.botUserId = me?.id || null;
-      logger.info?.(`[scroll-telegram] connected @${bot.username} (${bot.id})`);
+      bot.canReadAllGroupMessages = typeof me?.can_read_all_group_messages === 'boolean'
+        ? me.can_read_all_group_messages
+        : null;
+      logger.info?.(`[scroll-telegram] connected @${bot.username} (${bot.id}) canReadAllGroups=${bot.canReadAllGroupMessages}`);
+      if (bot.groupPolicy !== 'off' && bot.canReadAllGroupMessages === false) {
+        logger.warn?.(`[scroll-telegram:${bot.id}] BotFather Group Privacy Mode is ENABLED; disable via /setprivacy -> Disable to observe non-mention group messages.`);
+      }
       pollBot(bot).catch(() => {});
     }
     scheduler.start();
+    const maintMs = Number(config.memoryMaintenanceIntervalMs ?? 30 * 60_000);
+    if (maintMs > 0) {
+      maintenanceTimer = setInterval(() => {
+        if (stopped || adminController.globalPaused) return;
+        const now = new Date();
+        const dayKey = now.toISOString().slice(0, 10);
+        const hour = now.getHours();
+        const isNightDreamWindow = hour >= 2 && hour < 4;
+        const shouldDream = isNightDreamWindow && [...bots.keys()].some((id) => lastDreamDayByBot.get(id) !== dayKey);
+        if (shouldDream) {
+          for (const id of bots.keys()) lastDreamDayByBot.set(id, dayKey);
+        }
+        runMemoryMaintenance({ idleMinutes: Number(config.memoryIdleFlushMinutes ?? 45), runDream: shouldDream }).catch(() => {});
+      }, maintMs);
+      if (typeof maintenanceTimer.unref === 'function') maintenanceTimer.unref();
+    }
     return { bots: [...bots.keys()] };
   }
 
   async function stop() {
     stopped = true;
+    if (maintenanceTimer) {
+      clearInterval(maintenanceTimer);
+      maintenanceTimer = null;
+    }
     scheduler.stop();
     for (const bot of bots.values()) {
       if (bot.pollAbort) bot.pollAbort.abort();
@@ -876,6 +995,8 @@ export async function createTelegramFleetDaemon(config = {}, {
     adminUi,
     start,
     stop,
+    getHealth,
+    runMemoryMaintenance,
     handleIncomingMessage,
     handleEditedMessage,
     handleCallbackQuery,
