@@ -395,10 +395,12 @@ export function createDomainCortexStore({
     });
   }
 
-  function listT3Atlas({ includePending = false } = {}) {
+  function listT3Atlas({ includePending = false, software = null } = {}) {
+    const swFilter = software ? norm(software) : '';
     return stmts.listT3.all()
       .map(hydrateT3)
-      .filter((a) => (includePending ? true : a.status !== 'pending_review'));
+      .filter((a) => (includePending ? true : (a.status !== 'pending_review' && a.status !== 'rejected')))
+      .filter((a) => (!swFilter || norm(a.software) === swFilter || norm(a.software).includes(swFilter)));
   }
 
   // Resolves Graceful Boundary Tier A / B / C / D for software & local-practice queries!
@@ -406,14 +408,16 @@ export function createDomainCortexStore({
     const nowMs = Date.parse(String(nowIso || now())) || Date.now();
     const swNorm = norm(software || query);
     const osNorm = norm(os || '');
+    const osWildcard = !osNorm || osNorm === 'any';
     const qNorm = norm(query);
+    const qTokens = qNorm.split(/\s+/).filter((t) => t.length >= 2);
 
     const candidates = listT3Atlas({ includePending: false }).filter((a) => {
       const aSw = norm(a.software);
       const aSig = norm(a.errorSignature);
       const swMatch = Boolean(aSw && (swNorm.includes(aSw) || qNorm.includes(aSw)));
-      const sigMatch = Boolean(aSig && qNorm.includes(aSig));
-      const osCompatible = !osNorm || a.os === 'any' || norm(a.os) === osNorm;
+      const sigMatch = Boolean(aSig && (qNorm.includes(aSig) || (qTokens.length >= 2 && qTokens.filter((t) => aSig.includes(t)).length >= 2)));
+      const osCompatible = osWildcard || a.os === 'any' || norm(a.os) === osNorm;
       return (swMatch || sigMatch) && osCompatible;
     });
 
@@ -427,7 +431,24 @@ export function createDomainCortexStore({
       };
     }
 
-    const best = candidates[0];
+    const scored = candidates.map((a) => {
+      let score = 0;
+      const aSw = norm(a.software);
+      const aSig = norm(a.errorSignature);
+      const aRoot = norm(`${a.rootCause} ${a.goalMilestone}`);
+      const aWork = norm(a.verifiedWorkaround);
+      if (swNorm && aSw === swNorm) score += 3;
+      if (!osWildcard && norm(a.os) === osNorm) score += 3;
+      if (aSig && qNorm && qNorm.includes(aSig)) score += 20;
+      for (const tok of qTokens) {
+        if (aSig.includes(tok)) score += 4;
+        else if (aRoot.includes(tok)) score += 2;
+        else if (aWork.includes(tok)) score += 1;
+      }
+      return { entry: a, score };
+    }).sort((x, y) => y.score - x.score);
+
+    const best = scored[0].entry;
     if (best.localVariation) {
       return {
         tier: 'C',
