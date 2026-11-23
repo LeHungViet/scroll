@@ -4,6 +4,7 @@ export * from './lib/auth.js';
 export * from './lib/codex-app-server.js';
 export * from './lib/providers.js';
 export * from './lib/mcp-client.js';
+export * from './lib/media-stage.js';
 export * from './lib/tools.js';
 export * from './lib/tool-retriever.js';
 export * from './lib/sandbox.js';

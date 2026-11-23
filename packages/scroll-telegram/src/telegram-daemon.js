@@ -23,6 +23,10 @@ import {
   createApprovalStore,
   createTurnRecoveryController,
   resolveTurnRecoveryConfig,
+  createPlainSpeakEngine,
+  resolvePlainSpeakConfig,
+  resolveMediaStagingDir,
+  persistMediaBuffer,
   ADMIN_CALLBACK_NAMESPACE,
 } from '@agentpro/scroll/chat';
 import { createTelegramApi } from './telegram-api.js';
@@ -114,10 +118,23 @@ function summarizeMediaMeta(msg) {
       mimeType: 'image/jpeg',
     });
   }
-  if (msg?.voice?.file_id) meta.push({ type: 'voice', fileId: msg.voice.file_id, duration: msg.voice.duration || null, mimeType: msg.voice.mime_type || 'audio/ogg' });
-  if (msg?.audio?.file_id) meta.push({ type: 'audio', fileId: msg.audio.file_id, name: msg.audio.file_name || 'audio', duration: msg.audio.duration || null, mimeType: msg.audio.mime_type || 'audio/mpeg' });
-  if (msg?.video?.file_id) meta.push({ type: 'video', fileId: msg.video.file_id, name: msg.video.file_name || 'video.mp4', duration: msg.video.duration || null, mimeType: msg.video.mime_type || 'video/mp4' });
-  if (msg?.video_note?.file_id) meta.push({ type: 'video', fileId: msg.video_note.file_id, name: 'video_note.mp4', duration: msg.video_note.duration || null, mimeType: 'video/mp4' });
+  if (msg?.voice?.file_id) meta.push({ type: 'voice', fileId: msg.voice.file_id, duration: msg.voice.duration || null, sizeBytes: msg.voice.file_size || null, mimeType: msg.voice.mime_type || 'audio/ogg' });
+  if (msg?.audio?.file_id) meta.push({ type: 'audio', fileId: msg.audio.file_id, name: msg.audio.file_name || 'audio', duration: msg.audio.duration || null, sizeBytes: msg.audio.file_size || null, mimeType: msg.audio.mime_type || 'audio/mpeg' });
+  if (msg?.video?.file_id) meta.push({ type: 'video', fileId: msg.video.file_id, name: msg.video.file_name || 'video.mp4', duration: msg.video.duration || null, sizeBytes: msg.video.file_size || null, mimeType: msg.video.mime_type || 'video/mp4' });
+  if (msg?.video_note?.file_id) meta.push({ type: 'video_note', fileId: msg.video_note.file_id, name: 'video_note.mp4', duration: msg.video_note.duration || null, sizeBytes: msg.video_note.file_size || null, mimeType: 'video/mp4' });
+  if (msg?.animation?.file_id) meta.push({ type: 'animation', fileId: msg.animation.file_id, name: msg.animation.file_name || 'animation.mp4', duration: msg.animation.duration || null, sizeBytes: msg.animation.file_size || null, mimeType: msg.animation.mime_type || 'video/mp4' });
+  if (msg?.sticker?.file_id) {
+    meta.push({
+      type: 'sticker',
+      fileId: msg.sticker.file_id,
+      emoji: msg.sticker.emoji || null,
+      setName: msg.sticker.set_name || null,
+      isAnimated: Boolean(msg.sticker.is_animated),
+      isVideo: Boolean(msg.sticker.is_video),
+      sizeBytes: msg.sticker.file_size || null,
+      mimeType: (!msg.sticker.is_animated && !msg.sticker.is_video) ? 'image/webp' : null,
+    });
+  }
   if (msg?.document?.file_id) {
     const isImgDoc = /^image\//i.test(msg.document.mime_type || '');
     meta.push({ type: isImgDoc ? 'image' : 'document', fileId: msg.document.file_id, name: msg.document.file_name || 'file', sizeBytes: msg.document.file_size || null, mimeType: msg.document.mime_type || null });
@@ -132,7 +149,9 @@ function formatMediaPlaceholder(mediaMeta = []) {
     if (m.type === 'image') return m.name ? `[Sent image: ${m.name}]` : '[Sent photo]';
     if (m.type === 'voice') return '[Sent voice message]';
     if (m.type === 'audio') return `[Sent audio: ${m.name || 'audio'}]`;
-    if (m.type === 'video') return `[Sent video: ${m.name || 'video'}]`;
+    if (m.type === 'video' || m.type === 'video_note') return `[Sent video: ${m.name || 'video'}]`;
+    if (m.type === 'animation') return `[Sent GIF: ${m.name || 'animation'}]`;
+    if (m.type === 'sticker') return `[Sent sticker${m.emoji ? `: ${m.emoji}` : ''}]`;
     return `[Sent ${m.type || 'attachment'}]`;
   }).join(' ');
 }
@@ -266,10 +285,28 @@ export async function createTelegramFleetDaemon(config = {}, {
   const bots = new Map();
   const pendingHitl = new Map();
   const inflightBursts = new Map();
+  const triggeredMessageKeys = new Set();
+  const MAX_TRIGGERED_MSG_KEYS = 4000;
+  const editMentionTriggerWindowMs = Number(config.editMentionTriggerWindowMs ?? 5 * 60_000);
   const startedAt = Date.now();
   let stopped = false;
 
   const scopeKeyFor = (botId, chatId, threadId = null) => `${botId}:${chatId}:${threadId ?? 'root'}`;
+
+  function markMessageTriggered(botId, chatId, msgId) {
+    if (msgId == null) return;
+    const key = `${botId}:${chatId}:${msgId}`;
+    if (triggeredMessageKeys.size >= MAX_TRIGGERED_MSG_KEYS && !triggeredMessageKeys.has(key)) {
+      const oldest = triggeredMessageKeys.values().next().value;
+      if (oldest !== undefined) triggeredMessageKeys.delete(oldest);
+    }
+    triggeredMessageKeys.add(key);
+  }
+
+  function wasMessageTriggered(botId, chatId, msgId) {
+    if (msgId == null) return false;
+    return triggeredMessageKeys.has(`${botId}:${chatId}:${msgId}`);
+  }
 
   const scheduler = createScheduler({
     filePath: path.join(stateDir, 'cron.json'),
@@ -511,19 +548,54 @@ export async function createTelegramFleetDaemon(config = {}, {
     return { ok: true, ...delivered };
   }
 
-  async function extractAttachments(bot, msg) {
+  const inboundStagingDir = resolveMediaStagingDir(stateDir, 'inbound');
+  const MAX_TG_STAGE_BYTES = 20 * 1024 * 1024;
+
+  async function downloadTelegramMediaToStaging(bot, { fileId, fileName = '', mimeType = null, sizeBytes = 0, maxBytes = MAX_TG_STAGE_BYTES } = {}) {
+    if (!fileId) return null;
+    if (Number(sizeBytes || 0) > maxBytes) return null;
+    try {
+      const info = await bot.api.getFile(fileId);
+      if (!info?.file_path) return null;
+      const buf = await bot.api.downloadFile(info.file_path);
+      if (!Buffer.isBuffer(buf) || !buf.length || buf.length > maxBytes) return null;
+      const saved = persistMediaBuffer(buf, {
+        stagingDir: inboundStagingDir,
+        prefix: bot.id,
+        mimeType,
+        fileName: fileName || path.basename(info.file_path),
+        maxBytes,
+      });
+      if (!saved || !saved.filePath) return null;
+      return { path: saved.filePath, bytes: saved.bytes, mimeType: saved.mimeType };
+    } catch (err) {
+      logger.warn?.(`[scroll-telegram:${bot.id}] inbound media download failed (${fileName || fileId}):`, err?.message || err);
+      return null;
+    }
+  }
+
+  async function extractSingleMessageAttachments(bot, msg, { fromReply = false } = {}) {
     const out = [];
+    if (!msg || typeof msg !== 'object') return out;
     if (Array.isArray(msg.photo) && msg.photo.length) {
       const largest = msg.photo[msg.photo.length - 1];
       try {
         const info = await bot.api.getFile(largest.file_id);
         if (info?.file_path) {
           const buf = await bot.api.downloadFile(info.file_path);
+          const staged = persistMediaBuffer(buf, {
+            stagingDir: inboundStagingDir,
+            prefix: `${bot.id}-photo`,
+            mimeType: 'image/jpeg',
+            fileName: 'photo.jpg',
+          });
           out.push({
             type: 'image',
             base64: buf.toString('base64'),
+            path: staged?.filePath || null,
             mimeType: 'image/jpeg',
-            caption: msg.caption || null,
+            caption: msg.caption || (fromReply ? '(replied-to photo)' : null),
+            ...(fromReply ? { fromReply: true } : {}),
           });
         }
       } catch (err) {
@@ -531,16 +603,109 @@ export async function createTelegramFleetDaemon(config = {}, {
       }
     }
     if (msg.voice?.file_id) {
-      out.push({ type: 'voice', fileId: msg.voice.file_id, duration: msg.voice.duration || null, mimeType: msg.voice.mime_type || 'audio/ogg' });
+      const dl = await downloadTelegramMediaToStaging(bot, {
+        fileId: msg.voice.file_id,
+        fileName: 'voice.ogg',
+        mimeType: msg.voice.mime_type || 'audio/ogg',
+        sizeBytes: msg.voice.file_size,
+      });
+      out.push({
+        type: 'voice',
+        fileId: msg.voice.file_id,
+        path: dl?.path || null,
+        duration: msg.voice.duration || null,
+        mimeType: dl?.mimeType || msg.voice.mime_type || 'audio/ogg',
+        ...(fromReply ? { fromReply: true } : {}),
+      });
     }
     if (msg.audio?.file_id) {
-      out.push({ type: 'audio', fileId: msg.audio.file_id, name: msg.audio.file_name || 'audio', duration: msg.audio.duration || null, mimeType: msg.audio.mime_type || 'audio/mpeg' });
+      const dl = await downloadTelegramMediaToStaging(bot, {
+        fileId: msg.audio.file_id,
+        fileName: msg.audio.file_name || 'audio.mp3',
+        mimeType: msg.audio.mime_type || 'audio/mpeg',
+        sizeBytes: msg.audio.file_size,
+      });
+      out.push({
+        type: 'audio',
+        fileId: msg.audio.file_id,
+        path: dl?.path || null,
+        name: msg.audio.file_name || 'audio',
+        duration: msg.audio.duration || null,
+        mimeType: dl?.mimeType || msg.audio.mime_type || 'audio/mpeg',
+        ...(fromReply ? { fromReply: true } : {}),
+      });
     }
     if (msg.video?.file_id) {
-      out.push({ type: 'video', fileId: msg.video.file_id, name: msg.video.file_name || 'video.mp4', duration: msg.video.duration || null, mimeType: msg.video.mime_type || 'video/mp4' });
+      const dl = await downloadTelegramMediaToStaging(bot, {
+        fileId: msg.video.file_id,
+        fileName: msg.video.file_name || 'video.mp4',
+        mimeType: msg.video.mime_type || 'video/mp4',
+        sizeBytes: msg.video.file_size,
+      });
+      out.push({
+        type: 'video',
+        fileId: msg.video.file_id,
+        path: dl?.path || null,
+        name: msg.video.file_name || 'video.mp4',
+        duration: msg.video.duration || null,
+        mimeType: dl?.mimeType || msg.video.mime_type || 'video/mp4',
+        ...(fromReply ? { fromReply: true } : {}),
+      });
     }
     if (msg.video_note?.file_id) {
-      out.push({ type: 'video', fileId: msg.video_note.file_id, name: 'video_note.mp4', duration: msg.video_note.duration || null, mimeType: 'video/mp4' });
+      const dl = await downloadTelegramMediaToStaging(bot, {
+        fileId: msg.video_note.file_id,
+        fileName: 'video_note.mp4',
+        mimeType: 'video/mp4',
+        sizeBytes: msg.video_note.file_size,
+      });
+      out.push({
+        type: 'video_note',
+        fileId: msg.video_note.file_id,
+        path: dl?.path || null,
+        name: 'video_note.mp4',
+        duration: msg.video_note.duration || null,
+        mimeType: dl?.mimeType || 'video/mp4',
+        ...(fromReply ? { fromReply: true } : {}),
+      });
+    }
+    if (msg.animation?.file_id) {
+      const dl = await downloadTelegramMediaToStaging(bot, {
+        fileId: msg.animation.file_id,
+        fileName: msg.animation.file_name || 'animation.mp4',
+        mimeType: msg.animation.mime_type || 'video/mp4',
+        sizeBytes: msg.animation.file_size,
+      });
+      out.push({
+        type: 'animation',
+        fileId: msg.animation.file_id,
+        path: dl?.path || null,
+        name: msg.animation.file_name || 'animation.mp4',
+        duration: msg.animation.duration || null,
+        mimeType: dl?.mimeType || msg.animation.mime_type || 'video/mp4',
+        ...(fromReply ? { fromReply: true } : {}),
+      });
+    }
+    if (msg.sticker?.file_id) {
+      const isStatic = !msg.sticker.is_animated && !msg.sticker.is_video;
+      const dl = isStatic
+        ? await downloadTelegramMediaToStaging(bot, {
+            fileId: msg.sticker.file_id,
+            fileName: 'sticker.webp',
+            mimeType: 'image/webp',
+            sizeBytes: msg.sticker.file_size,
+            maxBytes: 1024 * 1024,
+          })
+        : null;
+      out.push({
+        type: 'sticker',
+        fileId: msg.sticker.file_id,
+        path: dl?.path || null,
+        emoji: msg.sticker.emoji || null,
+        setName: msg.sticker.set_name || null,
+        mimeType: dl?.mimeType || (isStatic ? 'image/webp' : null),
+        ...(fromReply ? { fromReply: true } : {}),
+      });
     }
     if (msg.document?.file_id) {
       const mime = String(msg.document.mime_type || '');
@@ -550,22 +715,54 @@ export async function createTelegramFleetDaemon(config = {}, {
           const info = await bot.api.getFile(msg.document.file_id);
           if (info?.file_path) {
             const buf = await bot.api.downloadFile(info.file_path);
+            const staged = persistMediaBuffer(buf, {
+              stagingDir: inboundStagingDir,
+              prefix: bot.id,
+              mimeType: mime,
+              fileName: msg.document.file_name || 'image',
+            });
             out.push({
               type: 'image',
               base64: buf.toString('base64'),
+              path: staged?.filePath || null,
               mimeType: mime,
               name: msg.document.file_name || 'image',
-              caption: msg.caption || null,
+              caption: msg.caption || (fromReply ? '(replied-to image)' : null),
+              ...(fromReply ? { fromReply: true } : {}),
             });
           }
         } catch (err) {
           logger.warn?.(`[scroll-telegram:${bot.id}] image document download failed:`, err?.message || err);
         }
       } else {
-        out.push({ type: 'document', fileId: msg.document.file_id, name: msg.document.file_name || 'file', mimeType: mime || null });
+        const dl = await downloadTelegramMediaToStaging(bot, {
+          fileId: msg.document.file_id,
+          fileName: msg.document.file_name || 'file',
+          mimeType: mime || null,
+          sizeBytes,
+        });
+        out.push({
+          type: 'document',
+          fileId: msg.document.file_id,
+          path: dl?.path || null,
+          name: msg.document.file_name || 'file',
+          mimeType: dl?.mimeType || mime || null,
+          sizeBytes: dl?.bytes || sizeBytes || null,
+          ...(fromReply ? { fromReply: true } : {}),
+        });
       }
     }
     return out;
+  }
+
+  async function extractAttachments(bot, msg) {
+    const own = await extractSingleMessageAttachments(bot, msg, { fromReply: false });
+    // Auto-rehydrate replied-to media when the user replies to an older photo/PDF/voice/video with no new attachment!
+    if (own.length === 0 && msg?.reply_to_message && summarizeMediaMeta(msg.reply_to_message).length > 0) {
+      const repMedia = await extractSingleMessageAttachments(bot, msg.reply_to_message, { fromReply: true });
+      if (repMedia.length > 0) own.push(repMedia[0]);
+    }
+    return own;
   }
 
   async function extractFileAttachment(bot, meta) {
@@ -575,9 +772,16 @@ export async function createTelegramFleetDaemon(config = {}, {
         const info = await bot.api.getFile(meta.fileId);
         if (info?.file_path) {
           const buf = await bot.api.downloadFile(info.file_path);
+          const staged = persistMediaBuffer(buf, {
+            stagingDir: inboundStagingDir,
+            prefix: bot.id,
+            mimeType: meta.mimeType || 'image/jpeg',
+            fileName: meta.name || 'image.jpg',
+          });
           return {
             type: 'image',
             base64: buf.toString('base64'),
+            path: staged?.filePath || null,
             mimeType: meta.mimeType || 'image/jpeg',
             name: meta.name || 'image',
             caption: meta.caption || null,
@@ -589,19 +793,24 @@ export async function createTelegramFleetDaemon(config = {}, {
       }
       return null;
     }
-    if (meta.type === 'document') {
-      return {
-        type: 'document',
+    if (['document', 'voice', 'audio', 'video', 'video_note', 'animation'].includes(meta.type)) {
+      const dl = await downloadTelegramMediaToStaging(bot, {
         fileId: meta.fileId,
-        name: meta.name || 'file',
+        fileName: meta.name || (meta.type === 'voice' ? 'voice.ogg' : meta.type === 'video' ? 'video.mp4' : 'file'),
         mimeType: meta.mimeType || null,
-        sizeBytes: meta.sizeBytes || null,
+        sizeBytes: meta.sizeBytes || 0,
+      });
+      return {
+        ...meta,
+        path: dl?.path || null,
+        mimeType: dl?.mimeType || meta.mimeType || null,
+        sizeBytes: dl?.bytes || meta.sizeBytes || null,
       };
     }
     return { ...meta };
   }
 
-  async function handleIncomingMessage(bot, msg, { updateId = null } = {}) {
+  async function handleIncomingMessage(bot, msg, { updateId = null, _fromEdit = false } = {}) {
     if (!msg || !msg.chat) return;
     if (msg.from?.is_bot) return;
     const chatId = String(msg.chat.id);
@@ -623,7 +832,7 @@ export async function createTelegramFleetDaemon(config = {}, {
     // 0-token Passive Observer: capture EVERY non-bot message (including non-mention group chat and
     // captionless forwarded files/photos) into 3-axis long-term memory BEFORE trigger gating!
     const observedText = [rawText, formatMediaPlaceholder(mediaMeta)].filter(Boolean).join(' ').trim();
-    if (observedText && !rawText.startsWith('/')) {
+    if (!_fromEdit && observedText && !rawText.startsWith('/')) {
       try {
         bot.runtime?.memoryTracker?.observeMessage?.({
           chatId,
@@ -648,7 +857,7 @@ export async function createTelegramFleetDaemon(config = {}, {
       chatId,
       chatTitle: msg.chat.title || null,
       isGroup,
-      isEdit: false,
+      isEdit: Boolean(_fromEdit),
       threadId,
       senderId,
       senderName,
@@ -665,21 +874,23 @@ export async function createTelegramFleetDaemon(config = {}, {
     };
 
     // Notify channel-agnostic Turn Recovery WAL of inbound non-command DM messages
-    bot.turnRecovery?.observeIncoming({
-      conversationId: chatId,
-      threadId,
-      messageId: msg.message_id,
-      isGroup,
-      isCommand: String(rawText || '').trim().startsWith('/'),
-      receivedAt: dateMs,
-    });
+    if (!_fromEdit) {
+      bot.turnRecovery?.observeIncoming({
+        conversationId: chatId,
+        threadId,
+        messageId: msg.message_id,
+        isGroup,
+        isCommand: String(rawText || '').trim().startsWith('/'),
+        receivedAt: dateMs,
+      });
 
-    // Allow plugins to observe every message (e.g. GCI v2 Layer 1 Ring + literalVault) BEFORE downloading heavy media bytes
-    for (const h of pluginHooks) {
-      if (typeof h.onRawMessage === 'function') {
-        try {
-          await h.onRawMessage(rawEvent);
-        } catch { /* isolate */ }
+      // Allow plugins to observe every message (e.g. GCI v2 Layer 1 Ring + literalVault) BEFORE downloading heavy media bytes
+      for (const h of pluginHooks) {
+        if (typeof h.onRawMessage === 'function') {
+          try {
+            await h.onRawMessage(rawEvent);
+          } catch { /* isolate */ }
+        }
       }
     }
 
@@ -774,6 +985,7 @@ export async function createTelegramFleetDaemon(config = {}, {
           quietMs: trig.quietMs ?? 2500,
           maxWaitMs: trig.maxWaitMs ?? 10_000,
         });
+        markMessageTriggered(bot.id, chatId, msg.message_id);
         return;
       }
     }
@@ -785,7 +997,9 @@ export async function createTelegramFleetDaemon(config = {}, {
       return;
     }
 
-    const attachments = mediaMeta.length ? await extractAttachments(bot, msg) : [];
+    markMessageTriggered(bot.id, chatId, msg.message_id);
+    const hasReplyMedia = Boolean(msg.reply_to_message && summarizeMediaMeta(msg.reply_to_message).length > 0);
+    const attachments = (mediaMeta.length || hasReplyMedia) ? await extractAttachments(bot, msg) : [];
     const actor = { id: senderId, senderId, isDm: !isGroup, isGroup };
 
     // Built-in slash commands
@@ -1395,6 +1609,23 @@ export async function createTelegramFleetDaemon(config = {}, {
       extractFileAttachment: (meta) => extractFileAttachment(botObj, meta),
     };
 
+    const psCfgRaw = {
+      ...(config.plainSpeak && typeof config.plainSpeak === 'object' ? config.plainSpeak : {}),
+      ...(bCfg.plainSpeak && typeof bCfg.plainSpeak === 'object' ? bCfg.plainSpeak : {}),
+    };
+    const psPacks = Array.isArray(bCfg.plainSpeak?.packs)
+      ? bCfg.plainSpeak.packs
+      : (Array.isArray(config.plainSpeak?.packs) ? config.plainSpeak.packs : []);
+    const plainSpeakEngine = psPacks.length > 0 && psCfgRaw.enabled !== false && psCfgRaw.mode !== 'off'
+      ? createPlainSpeakEngine({
+          packs: psPacks,
+          config: resolvePlainSpeakConfig(config.plainSpeak || {}, bCfg.plainSpeak || {}),
+          stateDir,
+          accountId: bCfg.accountId || bCfg.id,
+          logger,
+        })
+      : null;
+
     const runtime = await createScrollChatRuntime({
       agentName: botObj.agentName,
       deploymentDir: botObj.deploymentDir,
@@ -1415,6 +1646,7 @@ export async function createTelegramFleetDaemon(config = {}, {
       toolsRetrieval: bCfg.toolsRetrieval || null,
       enableMcp: Boolean(bCfg.enableMcp),
       voiceHooks: bCfg.voiceHooks || null,
+      plainSpeak: plainSpeakEngine,
       groundingMode: bCfg.groundingMode || config.groundingMode || null,
       trustedRooms: bCfg.trustedRooms || config.trustedRooms || [],
       groundingRetryMax: bCfg.groundingRetryMax ?? config.groundingRetryMax ?? 1,
@@ -1425,6 +1657,25 @@ export async function createTelegramFleetDaemon(config = {}, {
     });
     botObj.runtime = runtime;
     botObj.tools = runtime.tools;
+    botObj.enableMcp = Boolean(bCfg.enableMcp);
+    if (bCfg.enableMcp) {
+      const mcpApproved = runtime.mcpManager?.listDiscoveredTools?.() || [];
+      const mcpQuarantined = [
+        ...(runtime.mcpManager?.listQuarantinedTools?.() || []),
+        ...(runtime.tools?.getQuarantinedTools?.() || []),
+      ];
+      if (runtime.mcpStartupError) {
+        logger.warn?.(`[scroll-telegram:${botObj.id}] MCP startup error: ${runtime.mcpStartupError}`);
+      }
+      if (mcpQuarantined.length > 0) {
+        const summary = mcpQuarantined.map((t) => `${t.fullName || t.name}:${t.reason || t.lockStatus || 'quarantined'}`).join(', ');
+        logger.warn?.(
+          `[scroll-telegram:${botObj.id}] WARNING: ${mcpQuarantined.length} MCP tool(s) QUARANTINED (${summary}). Run "scroll mcp diff && scroll mcp approve" in ${botObj.deploymentDir}`
+        );
+      } else {
+        logger.info?.(`[scroll-telegram:${botObj.id}] MCP connected: ${mcpApproved.length} approved tool(s)`);
+      }
+    }
     const agentLang = runtime?.agent?.identity?.language || bCfg.language || config.language || 'en';
     botObj.turnRecovery = createTurnRecoveryController({
       stateDir,
@@ -1525,6 +1776,27 @@ export async function createTelegramFleetDaemon(config = {}, {
         } catch { /* isolate */ }
       }
     }
+
+    // If a recent untriggered group message is edited to newly add an @mention, slash command, or mention pattern
+    // (e.g. user forgot to tag @bot and edited the message seconds later), dispatch ONE turn cleanly.
+    if (
+      isGroup
+      && editMentionTriggerWindowMs > 0
+      && msg.message_id != null
+      && !wasMessageTriggered(bot.id, chatId, msg.message_id)
+    ) {
+      const origDateMs = msg.date ? Number(msg.date) * 1000 : Date.now();
+      const ageMs = Math.abs(Date.now() - origDateMs);
+      if (ageMs <= editMentionTriggerWindowMs) {
+        const editTrig = matchesTrigger({ bot, msg, text: rawText });
+        if (
+          editTrig.trigger
+          && (editTrig.reason === 'at_mention' || editTrig.reason === 'slash_command' || editTrig.reason === 'pattern_mention')
+        ) {
+          await handleIncomingMessage(bot, msg, { updateId, _fromEdit: true });
+        }
+      }
+    }
   }
 
   async function pollBot(bot) {
@@ -1591,6 +1863,13 @@ export async function createTelegramFleetDaemon(config = {}, {
         canReadAllGroupMessages: b.canReadAllGroupMessages,
         privacyModeWarning: Boolean(b.groupPolicy !== 'off' && b.canReadAllGroupMessages === false),
         memory: b.runtime?.memoryTracker?.getStats?.() || null,
+        mcp: b.enableMcp
+          ? {
+              approved: (b.runtime?.mcpManager?.listDiscoveredTools?.() || []).length,
+              quarantined: (b.runtime?.mcpManager?.listQuarantinedTools?.() || []).length + (b.runtime?.tools?.getQuarantinedTools?.() || []).length,
+              startupError: b.runtime?.mcpStartupError || null,
+            }
+          : null,
         pendingRecovery: b.turnRecovery ? b.turnRecovery.listPending().length : 0,
         stats: { ...b.stats },
       })),

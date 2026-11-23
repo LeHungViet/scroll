@@ -718,16 +718,55 @@ await t('S17-S25: Telegram daemon Zero-Leak Shield, /clear ACL+debouncer drop, c
     await bot.debouncer.flushAll();
     assert.ok(tg.fileDownloads.some((d) => d.file_id === 'triggered_photo_2'), 'triggered photo MUST download');
 
-    // S25: Edited message updates onRawMessage({ isEdit: true }) WITHOUT triggering a duplicate LLM turn!
+    // S25a: Editing an ALREADY-triggered message observes onRawMessage({ isEdit: true }) WITHOUT triggering a duplicate LLM turn!
     const callsBeforeEdit = providerCalls.length;
+    await daemon.handleEditedMessage(bot, {
+      message_id: 31,
+      chat: { id: -5004, type: 'supergroup', title: 'Forum Group' },
+      from: { id: 2002, first_name: 'Sam' },
+      caption: '@helper_bot scan this receipt please',
+      date: Math.floor(Date.now() / 1000),
+      edit_date: Math.floor(Date.now() / 1000),
+    });
+    await bot.debouncer.flushAll();
+    assert.equal(observedRaw.at(-1).isEdit, true);
+    assert.equal(providerCalls.length, callsBeforeEdit, 'editing already-triggered msg must observe without triggering duplicate turn');
+
+    // S25b: Editing a recent UNTRIGGERED group message to newly add @mention triggers ONE LLM turn (and subsequent typo edit does NOT double-trigger!)
     await daemon.handleEditedMessage(bot, {
       message_id: 30,
       chat: { id: -5004, type: 'supergroup', title: 'Forum Group' },
       from: { id: 2002, first_name: 'Sam' },
-      text: '@helper_bot edited typo',
+      text: 'edited to add @helper_bot now',
+      date: Math.floor(Date.now() / 1000) - 20,
+      edit_date: Math.floor(Date.now() / 1000),
     });
-    assert.equal(observedRaw.at(-1).isEdit, true);
-    assert.equal(providerCalls.length, callsBeforeEdit, 'edited_message must observe without triggering duplicate turn');
+    await bot.debouncer.flushAll();
+    assert.equal(providerCalls.length, callsBeforeEdit + 1, 'editing recent untriggered group msg to add @mention MUST trigger 1 LLM turn');
+
+    // Second edit on message_id 30 MUST NOT re-trigger
+    await daemon.handleEditedMessage(bot, {
+      message_id: 30,
+      chat: { id: -5004, type: 'supergroup', title: 'Forum Group' },
+      from: { id: 2002, first_name: 'Sam' },
+      text: 'edited typo again @helper_bot',
+      date: Math.floor(Date.now() / 1000) - 20,
+      edit_date: Math.floor(Date.now() / 1000) + 5,
+    });
+    await bot.debouncer.flushAll();
+    assert.equal(providerCalls.length, callsBeforeEdit + 1, 'second edit on already edit-triggered msg MUST NOT double-trigger');
+
+    // S25c: Editing a STALE untriggered group message (>5 min old) to add @mention observes WITHOUT triggering
+    await daemon.handleEditedMessage(bot, {
+      message_id: 32,
+      chat: { id: -5004, type: 'supergroup', title: 'Forum Group' },
+      from: { id: 2002, first_name: 'Sam' },
+      text: 'old thread @helper_bot',
+      date: Math.floor(Date.now() / 1000) - 600,
+      edit_date: Math.floor(Date.now() / 1000),
+    });
+    await bot.debouncer.flushAll();
+    assert.equal(providerCalls.length, callsBeforeEdit + 1, 'stale (>5m) edited_message MUST NOT resurrect old threads');
   } finally {
     await daemon.stop();
   }
@@ -812,6 +851,82 @@ rl.on('line', (line) => {
       () => client.runTurn({ threadId: th.threadId, input: 'HANG_FOREVER', timeoutMs: 180, maxWallMs: 2000 }),
       /codex_turn_timeout:180ms/
     );
+  } finally {
+    await client.close();
+  }
+});
+
+// ── 8b. Codex App-Server Dotted MCP Dynamic Tool Wire Sanitization & Reverse Mapping (S26b) ──
+await t('S26b: Codex App-Server sanitizes dotted MCP tool names (avoiding dots and reserved mcp__ prefix) and reverse-maps callbacks', async () => {
+  const dir = path.join(tmpRoot, 's26b-codex-mcp-wire');
+  fs.mkdirSync(dir, { recursive: true });
+  const mockCodex = path.join(dir, 'mock-codex-mcp.mjs');
+  fs.writeFileSync(mockCodex, `#!/usr/bin/env node
+import readline from 'node:readline';
+const rl = readline.createInterface({ input: process.stdin });
+const send = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
+let dynNames = [];
+rl.on('line', (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: msg.id, result: { userAgent: 'mock-codex' } });
+  } else if (msg.method === 'model/list') {
+    send({ jsonrpc: '2.0', id: msg.id, result: { data: [{ id: 'mock-codex-1', isDefault: true }] } });
+  } else if (msg.method === 'thread/start') {
+    const tools = msg.params?.dynamicTools || [];
+    for (const tool of tools) {
+      if (!/^[a-zA-Z0-9_-]+$/.test(tool.name)) {
+        send({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'dynamic tool name must match ^[a-zA-Z0-9_-]+$ to match Responses API: ' + tool.name } });
+        return;
+      }
+      if (/^mcp__/i.test(tool.name)) {
+        send({ jsonrpc: '2.0', id: msg.id, error: { code: -32600, message: 'dynamic tool name is reserved: ' + tool.name } });
+        return;
+      }
+      dynNames.push(tool.name);
+    }
+    send({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: 'th_mcp_1' } } });
+  } else if (msg.method === 'turn/start') {
+    const th = msg.params.threadId;
+    const tid = 'turn_mcp_1';
+    send({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: tid } } });
+    send({ jsonrpc: '2.0', method: 'turn/started', params: { threadId: th, turn: { id: tid } } });
+    send({ jsonrpc: '2.0', id: 701, method: 'item/tool/call', params: { threadId: th, turnId: tid, callId: 'call_obs', tool: dynNames[0], arguments: { app: 'Notion' } } });
+  } else if (msg.id === 701) {
+    const txt = msg.result?.contentItems?.[0]?.text || '';
+    send({ jsonrpc: '2.0', method: 'item/agentMessage/delta', params: { threadId: 'th_mcp_1', turnId: 'turn_mcp_1', delta: 'OBSERVED:' + txt } });
+    send({ jsonrpc: '2.0', method: 'turn/completed', params: { threadId: 'th_mcp_1', turn: { id: 'turn_mcp_1', status: 'completed' } } });
+  }
+});
+`);
+  fs.chmodSync(mockCodex, 0o755);
+
+  const client = createCodexAppServerClient({
+    command: process.execPath,
+    args: [mockCodex],
+    cwd: dir,
+    timeoutMs: 3000,
+  });
+  const calledCanonicalTools = [];
+  try {
+    const th = await client.startThread({
+      model: 'mock-codex-1',
+      dynamicTools: [
+        { name: 'mcp.river-cua.cua_observe', description: 'Observe app', parameters: { type: 'object', properties: { app: { type: 'string' } } } },
+        { name: 'mcp.river-cua.cua_act', description: 'Act in app', parameters: { type: 'object', properties: { app: { type: 'string' } } } },
+      ],
+    });
+    const res = await client.runTurn({
+      threadId: th.threadId,
+      input: 'Observe Notion',
+      onToolCall: async ({ tool, arguments: a }) => {
+        calledCanonicalTools.push({ tool, app: a.app });
+        return { ok: true, text: JSON.stringify({ window: 'Orderplus', app: a.app }) };
+      },
+    });
+    assert.equal(calledCanonicalTools.length, 1);
+    assert.equal(calledCanonicalTools[0].tool, 'mcp.river-cua.cua_observe', 'wire name mcp_river-cua_cua_observe MUST reverse-map to canonical mcp.river-cua.cua_observe');
+    assert.ok(res.text.includes('Orderplus'));
   } finally {
     await client.close();
   }

@@ -81,6 +81,49 @@ export function createTurnRecoveryController(opts?: {
   stop(): void;
 };
 
+export const DEFAULT_PLAIN_SPEAK_CONFIG: Readonly<{
+  enabled: boolean;
+  mode: 'live' | 'shadow' | 'off';
+  defaultRegister: 'casual_human' | 'client_plain' | 'expert_peer';
+  forceRegister: 'casual_human' | 'client_plain' | 'expert_peer' | null;
+  locale: string;
+  dateOrder: string;
+  rewriteEnabled: boolean;
+  rewriteMaxChars: number;
+  rewriteTimeoutMs: number;
+  rewriteMaxTurnLatencyMs: number;
+  rewriteTierBMinHits: number;
+  rewriteMinRatio: number;
+  rewriteMaxRatio: number;
+  maxPreGenExamples: number;
+  telemetryEnabled: boolean;
+  telemetryMaxBytes: number;
+}>;
+export function verifyExtendedPlainSpeakInvariant(rawBaseline: string, candidate: string, opts?: { dateOrder?: string }): { ok: boolean; reason?: string; diffs?: unknown[] };
+export function validatePlainSpeakPack(pack: unknown): { ok: boolean; errors: string[]; warnings: string[] };
+export function loadPlainSpeakPackFromFile(filePath: string): Record<string, unknown>;
+export function mergePlainSpeakPacks(packs?: Array<string | Record<string, unknown>>): Record<string, unknown>;
+export function resolvePlainSpeakConfig(globalCfg?: Record<string, unknown>, agentCfg?: Record<string, unknown>): typeof DEFAULT_PLAIN_SPEAK_CONFIG;
+export function createPlainSpeakEngine(opts?: {
+  packs?: Array<string | Record<string, unknown>>;
+  config?: Record<string, unknown>;
+  stateDir?: string | null;
+  accountId?: string;
+  templates?: Record<string, unknown> | null;
+  logger?: Pick<Console, 'info' | 'warn' | 'error'>;
+}): {
+  readonly enabled: boolean;
+  readonly config: typeof DEFAULT_PLAIN_SPEAK_CONFIG;
+  readonly packIds: string[];
+  readonly entryCount: number;
+  readonly telemetryPath: string | null;
+  detectRegister(opts?: Record<string, unknown>): { register: string; userUsedTerms: Set<string>; confusionSignal: boolean; reason: string };
+  buildPreGenCue(opts?: Record<string, unknown>): string;
+  auditText(text: string, opts?: Record<string, unknown>): Record<string, unknown>;
+  applyDeterministicFilter(text: string, opts?: Record<string, unknown>): Record<string, unknown>;
+  processOutgoing(opts: Record<string, unknown>): Promise<Record<string, unknown>>;
+};
+
 export function createScrollChatRuntime(opts: {
   agentName: string;
   deploymentDir?: string;
