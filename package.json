@@ -1,7 +1,7 @@
 {
   "name": "@agentpro/scroll",
-  "version": "2.5.12",
-  "description": "SCROLL 2.5 -- zero-dependency harness for agentic loops and interactive chat sessions. Build AI agents as folders, not code: filesystem-native, 4-provider parity, portable Tool Retriever, OS-sandboxed tools, Streamable HTTP + stdio MCP, OAuth/Codex auth, and timezone-aware scheduling.",
+  "version": "2.6.0",
+  "description": "SCROLL 2.6 -- zero-dependency harness for agentic loops and interactive chat sessions. Build AI agents as folders, not code: filesystem-native, 4-provider parity, portable Tool Retriever, OS-sandboxed tools, Streamable HTTP + stdio MCP, OAuth/Codex auth, opt-in universal Continuity & vertical Advisory packages, and timezone-aware scheduling.",
   "main": "index.js",
   "types": "./types/index.d.ts",
   "exports": {
@@ -64,7 +64,7 @@
     "test:v14": "node test/v14.smoke.mjs",
     "test:installers": "node test/installers.smoke.mjs",
     "test:v25": "node test/v25-security-gates.smoke.mjs && node test/v25-tool-retriever.smoke.mjs && node test/v25-providers-mcp-eval.smoke.mjs && node test/v25-packaging.smoke.mjs && node test/v25-hardening.smoke.mjs && node test/v25-chat-dm-group-chaos.smoke.mjs",
-    "test:v26": "node test/v26-alerts.smoke.mjs",
+    "test:v26": "node test/v26-alerts.smoke.mjs && node test/v26-continuity-advisory.smoke.mjs",
     "ci": "node test/smoke.mjs && node test/runtime.smoke.mjs && node test/v14.smoke.mjs && node test/v15.smoke.mjs && node test/installers.smoke.mjs && node test/v16.smoke.mjs && node test/v17.smoke.mjs && node test/v18.smoke.mjs && node test/v19.smoke.mjs && node test/v19-loader.smoke.mjs && node test/v19-user.smoke.mjs && node test/v19-boundary.smoke.mjs && node test/v19-style-grounding.smoke.mjs && node test/v110-knowledge.smoke.mjs && node test/v20-auth-provider.smoke.mjs && node test/v20-chat-tools-mcp.smoke.mjs && node test/v20-scheduler-workers.smoke.mjs && node test/v20-memory-caching.smoke.mjs && node test/v25-security-gates.smoke.mjs && node test/v25-tool-retriever.smoke.mjs && node test/v25-providers-mcp-eval.smoke.mjs && node test/v25-packaging.smoke.mjs && node test/v25-hardening.smoke.mjs && node test/v25-chat-dm-group-chaos.smoke.mjs && node test/v25-turn-recovery.smoke.mjs && node test/v25-plain-speak.smoke.mjs && node test/v25-multimodal-mcp.smoke.mjs && node test/v26-alerts.smoke.mjs && node test/v26-continuity-advisory.smoke.mjs && node test/audit.smoke.mjs && node --test test/teamcode.test.js",
     "eval:ab": "node eval/ab-scroll-vs-baseline/runner.mjs",
     "eval:ab:live": "node eval/ab-scroll-vs-baseline/runner.mjs --delay 350",
