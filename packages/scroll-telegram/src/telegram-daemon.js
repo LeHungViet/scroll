@@ -29,7 +29,33 @@ import { createTelegramAdminUi } from './telegram-admin-ui.js';
 const HITL_NAMESPACE = 'scroll-hitl';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 const INTERNAL_GROUP_ERROR_LEAK_RE = /(?:\[Response held:|unverified factual claim|could not be grounded in trusted sources|Traceback \(most recent call last\)|\b(?:TypeError|ReferenceError|SyntaxError|RangeError|ENOENT|ECONNREFUSED|SQLITE_[A-Z_]+)\b|^\s*\[(?:error|debug|trace|internal|system)\b)/i;
+const NO_REPLY_OUTBOUND_RE = /^\s*(?:`{1,3})?\[?\s*NO_REPLY\s*\]?(?:`{1,3})?[\s.!]*$/i;
 const DEFAULT_GROUP_HELD_FALLBACK = 'Let me double-check that and get back to you shortly.';
+
+function extractForwardOrigin(msg) {
+  const fo = msg?.forward_origin;
+  if (fo && typeof fo === 'object') {
+    const kind = fo.type || 'unknown';
+    const srcId = fo.sender_user?.id || fo.chat?.id || fo.sender_chat?.id || fo.sender_user_name || '';
+    const date = fo.date || msg?.forward_date || 0;
+    return { kind, sourceId: String(srcId || ''), date, key: `${kind}:${srcId}` };
+  }
+  if (msg?.forward_from?.id) {
+    return { kind: 'user', sourceId: String(msg.forward_from.id), date: msg.forward_date || 0, key: `user:${msg.forward_from.id}` };
+  }
+  if (msg?.forward_from_chat?.id) {
+    return { kind: 'chat', sourceId: String(msg.forward_from_chat.id), date: msg.forward_date || 0, key: `chat:${msg.forward_from_chat.id}` };
+  }
+  if (msg?.forward_sender_name) {
+    return { kind: 'hidden_user', sourceId: String(msg.forward_sender_name), date: msg.forward_date || 0, key: `hidden:${msg.forward_sender_name}` };
+  }
+  return null;
+}
+
+function extractReplyQuoteText(msg) {
+  const q = msg?.quote?.text;
+  return typeof q === 'string' && q.trim() ? q.trim().slice(0, 400) : null;
+}
 
 function extractReplyContext(msg) {
   const r = msg?.reply_to_message;
@@ -77,7 +103,15 @@ function splitTelegramChunks(text, maxLen = 4000) {
 
 function summarizeMediaMeta(msg) {
   const meta = [];
-  if (Array.isArray(msg?.photo) && msg.photo.length) meta.push({ type: 'image' });
+  if (Array.isArray(msg?.photo) && msg.photo.length) {
+    const largest = msg.photo[msg.photo.length - 1];
+    meta.push({
+      type: 'image',
+      fileId: largest?.file_id || null,
+      sizeBytes: largest?.file_size || null,
+      mimeType: 'image/jpeg',
+    });
+  }
   if (msg?.voice?.file_id) meta.push({ type: 'voice', fileId: msg.voice.file_id, duration: msg.voice.duration || null, mimeType: msg.voice.mime_type || 'audio/ogg' });
   if (msg?.audio?.file_id) meta.push({ type: 'audio', fileId: msg.audio.file_id, name: msg.audio.file_name || 'audio', duration: msg.audio.duration || null, mimeType: msg.audio.mime_type || 'audio/mpeg' });
   if (msg?.video?.file_id) meta.push({ type: 'video', fileId: msg.video.file_id, name: msg.video.file_name || 'video.mp4', duration: msg.video.duration || null, mimeType: msg.video.mime_type || 'video/mp4' });
@@ -229,8 +263,11 @@ export async function createTelegramFleetDaemon(config = {}, {
 
   const bots = new Map();
   const pendingHitl = new Map();
+  const inflightBursts = new Map();
   const startedAt = Date.now();
   let stopped = false;
+
+  const scopeKeyFor = (botId, chatId, threadId = null) => `${botId}:${chatId}:${threadId ?? 'root'}`;
 
   const scheduler = createScheduler({
     filePath: path.join(stateDir, 'cron.json'),
@@ -330,8 +367,14 @@ export async function createTelegramFleetDaemon(config = {}, {
     threadId = null,
     turn,
   }) {
+    if (turn?.noReply || turn?.aborted) {
+      return { delivered: false, silent: true, suppressed: false, bubbles: 0, sentMessageIds: [], firstMessageId: null, text: '' };
+    }
     const rawBubbles = Array.isArray(turn?.bubbles) && turn.bubbles.length ? turn.bubbles : [turn?.text];
     const combinedOut = rawBubbles.filter(Boolean).join('\n').trim();
+    if (!combinedOut || NO_REPLY_OUTBOUND_RE.test(combinedOut)) {
+      return { delivered: false, silent: true, suppressed: false, bubbles: 0, sentMessageIds: [], firstMessageId: null, text: '' };
+    }
     const leakDetected = isGroup && (Boolean(turn?.streamHeld) || INTERNAL_GROUP_ERROR_LEAK_RE.test(combinedOut));
     if (leakDetected) {
       const ownerDm = bot.ownerIds?.[0] || ownerIds?.[0] || null;
@@ -346,32 +389,54 @@ export async function createTelegramFleetDaemon(config = {}, {
           text: `[${bot.id} · Group Shield] Suppressed unverified/internal output in ${roomLabel}.\n${diag.slice(0, 450)}`,
         }).catch(() => {});
       }
-      await bot.api.sendMessage({
+      const fallbackText = bot.groupHeldFallback || DEFAULT_GROUP_HELD_FALLBACK;
+      const sentRes = await bot.api.sendMessage({
         chatId,
-        text: bot.groupHeldFallback || DEFAULT_GROUP_HELD_FALLBACK,
+        text: fallbackText,
         replyToMessageId: replyToMessageId || null,
         messageThreadId: threadId ?? null,
       });
-      return { suppressed: true, bubbles: 1 };
+      const mid = sentRes?.message_id ?? null;
+      return {
+        delivered: true,
+        silent: false,
+        suppressed: true,
+        bubbles: 1,
+        sentMessageIds: mid != null ? [mid] : [],
+        firstMessageId: mid,
+        text: fallbackText,
+      };
     }
     if (turn?.streamHeld) {
       logger.warn?.(`[scroll-telegram:${bot.id}] grounding held unverified reply for chat ${chatId}`);
     }
     let sent = 0;
-    const flattened = rawBubbles.flatMap((b) => splitTelegramChunks(b, 4000));
+    const sentMessageIds = [];
+    const flattened = rawBubbles
+      .flatMap((b) => splitTelegramChunks(b, 4000))
+      .filter((c) => c && !NO_REPLY_OUTBOUND_RE.test(c));
     for (let i = 0; i < flattened.length; i++) {
       const chunk = flattened[i];
       if (!chunk) continue;
       if (sent > 0) await sleep(Math.round(350 * bot.delayScale));
-      await bot.api.sendMessage({
+      const sentRes = await bot.api.sendMessage({
         chatId,
         text: chunk,
         replyToMessageId: sent === 0 && isGroup ? replyToMessageId : null,
         messageThreadId: threadId ?? null,
       });
+      if (sentRes?.message_id != null) sentMessageIds.push(sentRes.message_id);
       sent++;
     }
-    return { suppressed: false, bubbles: sent };
+    return {
+      delivered: sent > 0,
+      silent: sent === 0,
+      suppressed: false,
+      bubbles: sent,
+      sentMessageIds,
+      firstMessageId: sentMessageIds[0] ?? null,
+      text: flattened.join('\n'),
+    };
   }
 
   async function deliverScheduledJob(job) {
@@ -501,7 +566,40 @@ export async function createTelegramFleetDaemon(config = {}, {
     return out;
   }
 
-  async function handleIncomingMessage(bot, msg) {
+  async function extractFileAttachment(bot, meta) {
+    if (!meta || !meta.fileId) return null;
+    if (meta.type === 'image' && Number(meta.sizeBytes || 0) <= 10 * 1024 * 1024) {
+      try {
+        const info = await bot.api.getFile(meta.fileId);
+        if (info?.file_path) {
+          const buf = await bot.api.downloadFile(info.file_path);
+          return {
+            type: 'image',
+            base64: buf.toString('base64'),
+            mimeType: meta.mimeType || 'image/jpeg',
+            name: meta.name || 'image',
+            caption: meta.caption || null,
+            fileId: meta.fileId,
+          };
+        }
+      } catch (err) {
+        logger.warn?.(`[scroll-telegram:${bot.id}] lazy image download failed:`, err?.message || err);
+      }
+      return null;
+    }
+    if (meta.type === 'document') {
+      return {
+        type: 'document',
+        fileId: meta.fileId,
+        name: meta.name || 'file',
+        mimeType: meta.mimeType || null,
+        sizeBytes: meta.sizeBytes || null,
+      };
+    }
+    return { ...meta };
+  }
+
+  async function handleIncomingMessage(bot, msg, { updateId = null } = {}) {
     if (!msg || !msg.chat) return;
     if (msg.from?.is_bot) return;
     const chatId = String(msg.chat.id);
@@ -509,9 +607,15 @@ export async function createTelegramFleetDaemon(config = {}, {
     const threadId = msg.message_thread_id != null ? Number(msg.message_thread_id) : null;
     const senderId = msg.from ? String(msg.from.id) : null;
     const senderName = senderDisplayName(msg.from);
+    const senderUsername = msg.from?.username || null;
     const rawText = String(msg.text || msg.caption || '').trim();
     const mediaMeta = summarizeMediaMeta(msg);
     const replyTo = extractReplyContext(msg);
+    const mediaGroupId = msg.media_group_id ? String(msg.media_group_id) : null;
+    const forwardOrigin = extractForwardOrigin(msg);
+    const replyQuoteText = extractReplyQuoteText(msg);
+    const entities = Array.isArray(msg.entities) ? msg.entities : (Array.isArray(msg.caption_entities) ? msg.caption_entities : []);
+    const dateMs = msg.date ? Number(msg.date) * 1000 : Date.now();
     if (!rawText && !mediaMeta.length) return;
 
     // 0-token Passive Observer: capture EVERY non-bot message (including non-mention group chat and
@@ -527,7 +631,7 @@ export async function createTelegramFleetDaemon(config = {}, {
           isEdit: false,
           senderId,
           senderName,
-          senderUsername: msg.from?.username || null,
+          senderUsername,
           messageId: msg.message_id,
           text: observedText,
           surface: 'telegram',
@@ -535,33 +639,50 @@ export async function createTelegramFleetDaemon(config = {}, {
       } catch { /* isolate passive observer errors */ }
     }
 
-    // Allow plugins to observe every message (e.g. rolling group buffer) BEFORE downloading heavy media bytes
+    const rawEvent = {
+      bot,
+      msg,
+      updateId,
+      chatId,
+      chatTitle: msg.chat.title || null,
+      isGroup,
+      isEdit: false,
+      threadId,
+      senderId,
+      senderName,
+      senderUsername,
+      text: rawText,
+      observedText,
+      mediaMeta,
+      replyTo,
+      mediaGroupId,
+      forwardOrigin,
+      replyQuoteText,
+      entities,
+      dateMs,
+    };
+
+    // Allow plugins to observe every message (e.g. GCI v2 Layer 1 Ring + literalVault) BEFORE downloading heavy media bytes
     for (const h of pluginHooks) {
       if (typeof h.onRawMessage === 'function') {
         try {
-          await h.onRawMessage({
-            bot,
-            msg,
-            chatId,
-            isGroup,
-            threadId,
-            senderId,
-            senderName,
-            text: rawText,
-            observedText,
-            mediaMeta,
-            replyTo,
-          });
+          await h.onRawMessage(rawEvent);
         } catch { /* isolate */ }
       }
     }
 
     const burstKey = `${bot.id}:${chatId}:${threadId ?? 'root'}:${senderId || 'anon'}`;
+    const scopeKey = scopeKeyFor(bot.id, chatId, threadId);
     let trig = matchesTrigger({ bot, msg, text: rawText });
-    // Group Follow-Up Burst Coalescing: when the SAME sender already triggered this bot in this
-    // group/thread and sends rapid follow-up lines while the debounce window is still open (without
-    // re-tagging @bot or re-replying on every line), coalesce them into the same burst — unless the
-    // follow-up explicitly replies to someone else or @mentions another bot.
+    // Default triggerKind mapping
+    if (trig.trigger) {
+      trig = {
+        ...trig,
+        triggerKind: isGroup ? (trig.reason === 'slash_command' ? 'slash_command' : 'hard') : 'dm',
+      };
+    }
+
+    // Group Follow-Up Burst Coalescing while debounce window is open
     if (!trig.trigger && isGroup && senderId && bot.debouncer?.hasPending?.(burstKey)) {
       const replyAuthorId = msg.reply_to_message?.from?.id != null ? String(msg.reply_to_message.from.id) : null;
       const replyingToOther = Boolean(
@@ -574,8 +695,77 @@ export async function createTelegramFleetDaemon(config = {}, {
         .filter((u) => !bot.username || u !== String(bot.username).toLowerCase());
       if (!replyingToOther && otherBotMentions.length === 0) {
         trig = { trigger: true, reason: 'burst_followup' };
+        trig.triggerKind = 'burst_followup';
       }
     }
+
+    // GCI v2 plugin hook: classifyGroupTrigger (Active Latch, Soft Mention downgrade, Adaptive Debounce, Preempt check)
+    const activeInflight = isGroup ? inflightBursts.get(scopeKey) || null : null;
+    if (isGroup && !rawText.startsWith('/')) {
+      for (const h of pluginHooks) {
+        if (typeof h.classifyGroupTrigger === 'function') {
+          try {
+            const verdict = await h.classifyGroupTrigger({
+              ...rawEvent,
+              burstKey,
+              scopeKey,
+              baseTrigger: trig,
+              hasPendingBurst: Boolean(bot.debouncer?.hasPending?.(burstKey)),
+              inflightTurn: activeInflight
+                ? { senderId: activeInflight.senderId, sendingStarted: activeInflight.sendingStarted, preemptCount: activeInflight.preemptCount }
+                : null,
+            });
+            if (verdict && typeof verdict === 'object') {
+              trig = { ...trig, ...verdict };
+              break;
+            }
+          } catch { /* isolate */ }
+        }
+      }
+    }
+
+    // Preempt & Coalesce: if same sender drops an additional bubble while their turn is still generating
+    // BEFORE `sendMessage` starts, abort the in-flight turn and re-queue the combined burst cleanly (max 2x).
+    if (
+      isGroup
+      && senderId
+      && activeInflight
+      && !activeInflight.sendingStarted
+      && activeInflight.senderId === senderId
+      && activeInflight.preemptCount < 2
+      && (trig.preemptInflight || trig.trigger)
+    ) {
+      const replyAuthorId = msg.reply_to_message?.from?.id != null ? String(msg.reply_to_message.from.id) : null;
+      const replyingToOther = Boolean(replyAuthorId && replyAuthorId !== String(bot.botUserId || '') && replyAuthorId !== senderId);
+      if (!replyingToOther) {
+        activeInflight.preempted = true;
+        activeInflight.abortController.abort();
+        try { bot.runtime.abortTurn?.(chatId); } catch { /* ignore */ }
+        inflightBursts.delete(scopeKey);
+        const newAtts = mediaMeta.length ? await extractAttachments(bot, msg) : [];
+        const prevItem = activeInflight.item;
+        const mergedText = [String(prevItem.text || '').trim(), rawText].filter(Boolean).join('\n');
+        const mergedIds = [
+          ...(Array.isArray(prevItem.messageIds) ? prevItem.messageIds : (prevItem.messageId != null ? [prevItem.messageId] : [])),
+          ...(msg.message_id != null ? [msg.message_id] : []),
+        ].filter((v, idx, arr) => v != null && arr.indexOf(v) === idx);
+        await bot.debouncer.push(burstKey, {
+          ...prevItem,
+          text: mergedText,
+          attachments: [...(Array.isArray(prevItem.attachments) ? prevItem.attachments : []), ...newAtts],
+          messageId: msg.message_id ?? prevItem.messageId,
+          messageIds: mergedIds,
+          triggerKind: prevItem.triggerKind === 'hard' || trig.triggerKind === 'hard' ? 'hard' : (trig.triggerKind || prevItem.triggerKind),
+          triggerReason: prevItem.triggerKind === 'hard' ? prevItem.triggerReason : (trig.reason || prevItem.triggerReason),
+          _preemptCount: activeInflight.preemptCount + 1,
+        }, {
+          quietMs: trig.quietMs ?? 2500,
+          maxWaitMs: trig.maxWaitMs ?? 10_000,
+        });
+        return;
+      }
+    }
+
     if (!trig.trigger) {
       if (bot.downloadUntriggeredGroupMedia && mediaMeta.length) {
         await extractAttachments(bot, msg).catch(() => {});
@@ -633,8 +823,8 @@ export async function createTelegramFleetDaemon(config = {}, {
 
     if (bot.paused || adminController.globalPaused) return;
 
-    // Owner natural-language delegation in groups
-    if (isGroup && senderId && bot.ownerSet.has(senderId) && matchesOwnerDelegationPhrase(rawText, bot.delegationPatterns)) {
+    // Owner natural-language delegation in groups (ONLY on live hard triggers!)
+    if (isGroup && trig.triggerKind === 'hard' && senderId && bot.ownerSet.has(senderId) && matchesOwnerDelegationPhrase(rawText, bot.delegationPatterns)) {
       groupGrants.grant({ roomId: chatId, isGroup: true, grantedBy: senderId, ttlMinutes: 60, note: rawText.slice(0, 120) });
     }
 
@@ -648,26 +838,131 @@ export async function createTelegramFleetDaemon(config = {}, {
       attachments,
       replyTo,
       messageId: msg.message_id,
+      triggerKind: trig.triggerKind || (isGroup ? 'hard' : 'dm'),
+      triggerReason: trig.reason || null,
+    }, {
+      quietMs: trig.quietMs ?? null,
+      maxWaitMs: trig.maxWaitMs ?? null,
     });
   }
 
   async function processBurst(bot, item) {
     if (bot.paused || adminController.globalPaused) return;
-    const { chatId, isGroup, threadId = null, chatTitle, sender, text, attachments, replyTo = null, messageId, messageIds } = item;
-    await bot.api.sendChatAction({ chatId, action: 'typing', messageThreadId: threadId });
-    const keepaliveMs = Number(bot.typingKeepaliveMs ?? 4000);
-    const typingTimer = keepaliveMs > 0
-      ? setInterval(() => {
-          bot.api.sendChatAction({ chatId, action: 'typing', messageThreadId: threadId }).catch(() => {});
-        }, keepaliveMs)
-      : null;
-    if (typingTimer && typeof typingTimer.unref === 'function') typingTimer.unref();
-    const activeGrant = isGroup ? groupGrants.getActiveGrant(chatId) : null;
+    let {
+      chatId,
+      isGroup,
+      threadId = null,
+      chatTitle,
+      sender,
+      text,
+      attachments = [],
+      replyTo = null,
+      messageId,
+      messageIds,
+      triggerKind = isGroup ? 'hard' : 'dm',
+      triggerReason = null,
+    } = item;
+    const burstKey = `${bot.id}:${chatId}:${threadId ?? 'root'}:${sender?.id || 'anon'}`;
+    const scopeKey = scopeKeyFor(bot.id, chatId, threadId);
+
+    const replyBlock = formatReplyContextBlock(replyTo);
+    let contextBlocks = replyBlock ? [replyBlock] : [];
+    let freshThreadContextBlocks = null;
+    let replyToMessageId = messageId;
+    let deferCommit = false;
+    let rotateProviderThread = false;
+    let skipTyping = false;
+    let gciMeta = null;
+
+    // GCI v2 pre-dispatch gate (runs BEFORE sending `typing` so dropped active_latch/soft_mention turns have 0.0% phantom typing!)
+    for (const h of pluginHooks) {
+      if (typeof h.beforeBurstDispatch === 'function') {
+        try {
+          const decision = await h.beforeBurstDispatch({
+            bot,
+            item,
+            chatId,
+            isGroup,
+            threadId,
+            chatTitle,
+            sender,
+            text,
+            attachments,
+            replyTo,
+            messageId,
+            messageIds,
+            triggerKind,
+            triggerReason,
+            burstKey,
+            scopeKey,
+          });
+          if (!decision || typeof decision !== 'object') continue;
+          if (decision.action === 'drop') {
+            return;
+          }
+          if (decision.action === 'wait_more') {
+            const count = Number(item._waitMoreCount || 0);
+            if (count < 2) {
+              await bot.debouncer.push(burstKey, {
+                ...item,
+                _waitMoreCount: count + 1,
+              }, {
+                quietMs: Number(decision.extendMs || 6000),
+                maxWaitMs: Number(decision.maxWaitMs || 15_000),
+              });
+              return;
+            }
+          }
+          if (Array.isArray(decision.contextBlocks)) {
+            contextBlocks = [...contextBlocks, ...decision.contextBlocks];
+          }
+          if (Array.isArray(decision.freshThreadContextBlocks)) {
+            freshThreadContextBlocks = [...(replyBlock ? [replyBlock] : []), ...decision.freshThreadContextBlocks];
+          }
+          if (Array.isArray(decision.extraAttachments) && decision.extraAttachments.length) {
+            attachments = [...attachments, ...decision.extraAttachments];
+          }
+          if (decision.triggerKind) triggerKind = decision.triggerKind;
+          if (decision.replyToMessageId !== undefined) replyToMessageId = decision.replyToMessageId;
+          if (decision.deferCommit !== undefined) deferCommit = Boolean(decision.deferCommit);
+          if (decision.rotateProviderThread !== undefined) rotateProviderThread = Boolean(decision.rotateProviderThread);
+          if (decision.skipTyping !== undefined) skipTyping = Boolean(decision.skipTyping);
+          if (decision.gciMeta) gciMeta = decision.gciMeta;
+        } catch (err) {
+          logger.warn?.(`[scroll-telegram:${bot.id}] beforeBurstDispatch error:`, err?.message || err);
+        }
+      }
+    }
+
+    let typingTimer = null;
+    if (!skipTyping) {
+      await bot.api.sendChatAction({ chatId, action: 'typing', messageThreadId: threadId });
+      const keepaliveMs = Number(bot.typingKeepaliveMs ?? 4000);
+      typingTimer = keepaliveMs > 0
+        ? setInterval(() => {
+            bot.api.sendChatAction({ chatId, action: 'typing', messageThreadId: threadId }).catch(() => {});
+          }, keepaliveMs)
+        : null;
+      if (typingTimer && typeof typingTimer.unref === 'function') typingTimer.unref();
+    }
+
+    const isSoftOrLatch = triggerKind === 'active_latch' || triggerKind === 'soft_mention';
+    const activeGrant = (isGroup && !isSoftOrLatch) ? groupGrants.getActiveGrant(chatId) : null;
     const participants = isGroup
       ? [sender, { id: 'group-member', channelId: 'tg:group-unknown', name: 'Member' }]
       : [sender];
-    const replyBlock = formatReplyContextBlock(replyTo);
-    const contextBlocks = replyBlock ? [replyBlock] : [];
+
+    const abortController = new AbortController();
+    const inflightEntry = {
+      senderId: sender?.id ? String(sender.id) : null,
+      item,
+      abortController,
+      sendingStarted: false,
+      preempted: false,
+      preemptCount: Number(item._preemptCount || 0),
+    };
+    if (isGroup) inflightBursts.set(scopeKey, inflightEntry);
+
     try {
       const turn = await bot.runtime.sendTurn({
         conversationId: chatId,
@@ -682,21 +977,62 @@ export async function createTelegramFleetDaemon(config = {}, {
         messageIds,
         attachments,
         contextBlocks,
+        freshThreadContextBlocks,
+        triggerKind,
+        deferCommit: deferCommit || isSoftOrLatch,
+        rotateProviderThread,
+        signal: abortController.signal,
         model: bot.model,
         effort: bot.effort,
         serviceTier: bot.serviceTier || null,
         delegatedTools: activeGrant ? activeGrant.allowedTools : null,
       });
+      if (turn?.aborted || inflightEntry.preempted || abortController.signal.aborted) {
+        return;
+      }
+      if (turn?.noReply) {
+        return;
+      }
       bot.stats.turns++;
-      await deliverSafeReply(bot, {
-        chatId,
-        isGroup,
-        chatTitle,
-        replyToMessageId: messageId,
-        threadId,
-        turn,
-      });
+      inflightEntry.sendingStarted = true;
+      const delivery = turn?._apDeliveryReceipt
+        ? turn._apDeliveryReceipt
+        : await deliverSafeReply(bot, {
+            chatId,
+            isGroup,
+            chatTitle,
+            replyToMessageId,
+            threadId,
+            turn,
+          });
+      if (delivery?.delivered && !delivery?.silent) {
+        for (const h of pluginHooks) {
+          if (typeof h.onReplyDelivered === 'function') {
+            try {
+              await h.onReplyDelivered({
+                bot,
+                chatId,
+                isGroup,
+                threadId,
+                chatTitle,
+                sender,
+                triggerKind,
+                triggerReason,
+                replyToMessageId,
+                messageId,
+                messageIds,
+                turn,
+                delivery,
+                gciMeta,
+              });
+            } catch { /* isolate */ }
+          }
+        }
+      }
     } catch (err) {
+      if (inflightEntry.preempted || abortController.signal.aborted || err?.name === 'AbortError') {
+        return;
+      }
       bot.stats.errors++;
       const errMsg = String(err?.message || err);
       logger.error?.(`[scroll-telegram:${bot.id}] turn error:`, errMsg);
@@ -710,6 +1046,9 @@ export async function createTelegramFleetDaemon(config = {}, {
       }
     } finally {
       if (typingTimer) clearInterval(typingTimer);
+      if (inflightBursts.get(scopeKey) === inflightEntry) {
+        inflightBursts.delete(scopeKey);
+      }
     }
   }
 
@@ -827,6 +1166,7 @@ export async function createTelegramFleetDaemon(config = {}, {
       tools: null,
       debouncer: null,
       pollAbort: null,
+      extractFileAttachment: (meta) => extractFileAttachment(botObj, meta),
     };
 
     const runtime = await createScrollChatRuntime({
@@ -893,15 +1233,18 @@ export async function createTelegramFleetDaemon(config = {}, {
     if (hook && typeof hook === 'object') pluginHooks.push(hook);
   }
 
-  async function handleEditedMessage(bot, msg) {
+  async function handleEditedMessage(bot, msg, { updateId = null } = {}) {
     if (!msg || !msg.chat || msg.from?.is_bot) return;
     const chatId = String(msg.chat.id);
     const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
     const threadId = msg.message_thread_id != null ? Number(msg.message_thread_id) : null;
     const senderId = msg.from ? String(msg.from.id) : null;
     const senderName = senderDisplayName(msg.from);
+    const senderUsername = msg.from?.username || null;
     const rawText = String(msg.text || msg.caption || '').trim();
-    if (!rawText) return;
+    const mediaMeta = summarizeMediaMeta(msg);
+    const observedText = [rawText, formatMediaPlaceholder(mediaMeta)].filter(Boolean).join(' ').trim();
+    if (!observedText) return;
     try {
       bot.runtime?.memoryTracker?.observeMessage?.({
         chatId,
@@ -911,8 +1254,9 @@ export async function createTelegramFleetDaemon(config = {}, {
         isEdit: true,
         senderId,
         senderName,
+        senderUsername,
         messageId: msg.message_id,
-        text: rawText,
+        text: observedText,
         surface: 'telegram',
       });
     } catch { /* isolate */ }
@@ -922,15 +1266,25 @@ export async function createTelegramFleetDaemon(config = {}, {
           await h.onRawMessage({
             bot,
             msg,
+            updateId,
             chatId,
+            chatTitle: msg.chat.title || null,
             isGroup,
             threadId,
             isEdit: true,
             senderId,
             senderName,
+            senderUsername,
             text: rawText,
-            mediaMeta: summarizeMediaMeta(msg),
+            observedText,
+            mediaMeta,
             replyTo: extractReplyContext(msg),
+            mediaGroupId: msg.media_group_id ? String(msg.media_group_id) : null,
+            forwardOrigin: extractForwardOrigin(msg),
+            replyQuoteText: extractReplyQuoteText(msg),
+            entities: Array.isArray(msg.entities) ? msg.entities : (Array.isArray(msg.caption_entities) ? msg.caption_entities : []),
+            dateMs: msg.date ? Number(msg.date) * 1000 : Date.now(),
+            editDateMs: msg.edit_date ? Number(msg.edit_date) * 1000 : Date.now(),
           });
         } catch { /* isolate */ }
       }
@@ -952,9 +1306,9 @@ export async function createTelegramFleetDaemon(config = {}, {
           if (upd.callback_query) {
             handleCallbackQuery(bot, upd.callback_query).catch((e) => logger.error?.('[callback]', e?.message || e));
           } else if (upd.message) {
-            handleIncomingMessage(bot, upd.message).catch((e) => logger.error?.('[message]', e?.message || e));
+            handleIncomingMessage(bot, upd.message, { updateId: upd.update_id }).catch((e) => logger.error?.('[message]', e?.message || e));
           } else if (upd.edited_message) {
-            handleEditedMessage(bot, upd.edited_message).catch((e) => logger.error?.('[edited_message]', e?.message || e));
+            handleEditedMessage(bot, upd.edited_message, { updateId: upd.update_id }).catch((e) => logger.error?.('[edited_message]', e?.message || e));
           }
         }
       } catch (err) {
