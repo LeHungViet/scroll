@@ -1249,8 +1249,9 @@ export async function createTelegramFleetDaemon(config = {}, {
     const burstKey = `${bot.id}:${chatId}:${threadId ?? 'root'}:${sender?.id || 'anon'}`;
     const scopeKey = scopeKeyFor(bot.id, chatId, threadId);
 
-    const replyBlocks = formatReplyContextBlocks(replyTo, replyTos);
+    let replyBlocks = formatReplyContextBlocks(replyTo, replyTos);
     let contextBlocks = [...replyBlocks];
+    let extraPrincipalSources = [];
     let freshThreadContextBlocks = null;
     let replyToMessageId = messageId;
     let deferCommit = false;
@@ -1314,6 +1315,9 @@ export async function createTelegramFleetDaemon(config = {}, {
           }
           if (Array.isArray(decision.extraAttachments) && decision.extraAttachments.length) {
             attachments = [...attachments, ...decision.extraAttachments];
+          }
+          if (Array.isArray(decision.extraPrincipalSources) && decision.extraPrincipalSources.length) {
+            extraPrincipalSources = [...extraPrincipalSources, ...decision.extraPrincipalSources.map((s) => String(s || '').trim()).filter(Boolean)];
           }
           if (decision.triggerKind) triggerKind = decision.triggerKind;
           if (decision.replyToMessageId !== undefined) replyToMessageId = decision.replyToMessageId;
@@ -1411,6 +1415,7 @@ export async function createTelegramFleetDaemon(config = {}, {
         attachments,
         contextBlocks,
         freshThreadContextBlocks,
+        ...(extraPrincipalSources.length ? { extraPrincipalSources } : {}),
         triggerKind,
         deferCommit: effectiveDeferCommit,
         rotateProviderThread,
