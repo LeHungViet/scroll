@@ -1321,6 +1321,7 @@ export async function createTelegramFleetDaemon(config = {}, {
   }
 
   let maintenanceTimer = null;
+  let prewarmTimer = null;
   const lastDreamDayByBot = new Map();
 
   async function runMemoryMaintenance({ idleMinutes = 45, runDream = false, forceDream = false, ack = false } = {}) {
@@ -1375,6 +1376,20 @@ export async function createTelegramFleetDaemon(config = {}, {
       pollBot(bot).catch(() => {});
     }
     scheduler.start();
+    // Proactively pre-warm shared Codex app-server right after Telegram connects so the very
+    // first user turn never pays cold-start / post-reboot initialize latency.
+    if (sharedCodexClient && config.codexAppServer?.prewarm !== false) {
+      const prewarmDelayMs = Math.max(0, Number(config.codexAppServer?.prewarmDelayMs ?? 1_500));
+      prewarmTimer = setTimeout(() => {
+        prewarmTimer = null;
+        if (stopped) return;
+        const t0 = Date.now();
+        sharedCodexClient.start()
+          .then(() => logger.info?.(`[scroll-telegram] pre-warmed codex app-server in ${Date.now() - t0}ms`))
+          .catch((err) => logger.warn?.('[scroll-telegram] codex pre-warm warning (will retry on first turn):', err?.message || err));
+      }, prewarmDelayMs);
+      if (typeof prewarmTimer.unref === 'function') prewarmTimer.unref();
+    }
     for (const h of pluginHooks) {
       if (typeof h.onStart === 'function') {
         try { await h.onStart({ bots, scheduler, config, stateDir, logger }); } catch (err) {
@@ -1407,6 +1422,10 @@ export async function createTelegramFleetDaemon(config = {}, {
       if (typeof h.onStop === 'function') {
         try { await h.onStop({ bots, scheduler, logger }); } catch { /* isolate */ }
       }
+    }
+    if (prewarmTimer) {
+      clearTimeout(prewarmTimer);
+      prewarmTimer = null;
     }
     if (maintenanceTimer) {
       clearInterval(maintenanceTimer);
