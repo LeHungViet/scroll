@@ -272,11 +272,16 @@ Useful `run` flags: `--for <slug>` (the person this step serves) · `--people <d
 
 ---
 
-## Packaging
+## Packaging & Opt-In Modules
 
-- **`@agentpro/scroll`** — the CLI + loader (npm).
-- **`@agentpro/scroll-schema`** — the versioned spec + JSON Schema.
-- **Storage adapters** — `@agentpro/scroll-s3`, `-gcs`, `-repo` (roadmap).
+SCROLL keeps the core runtime lightweight and zero-dependency; opt-in packages let you compose only the capabilities each agent needs:
+
+| Package | Audience | What it adds |
+|---|---|---|
+| **`@agentpro/scroll`** | **Every agent** | Core CLI, loader, 4-provider loop, sandboxed tools, grounding, flat memory, scheduling |
+| **`@agentpro/scroll-telegram`** | **Telegram bots** | Zero-dep multi-bot Telegram fleet adapter (polling, inline `/admin`, HITL buttons, vision, cron delivery) |
+| **`@agentpro/scroll-continuity`** | **Any long-running agent** *(personal assistants, coordinators, ops bots, customer teams)* | Universal cross-session memory & state kernel: 6-table bi-temporal provenance SQLite ledger (`node:sqlite` + `FTS5`), POMR goal & pragmatic backlog parking (`B\|D\|U` + `wake_cues`, `SMR=0%` statutory lock), evidence-backed 5D peer style cards, async Sleep-Time worker (`as_of_seq` CAS), unbounded `continuity_recall`, and time-travel replay harness |
+| **`@agentpro/scroll-advisory`** | **Deep vertical specialists only** *(tax/accounting, legal, HR compliance, clinical triage, audit, enterprise software support)* | Layers on top of `@agentpro/scroll-continuity`: Tri-Partite Domain Cortex (`T1` bi-temporal rules · `T2` verified CBR cases with auto-freeze · `T3` TTL Software Reality Atlas), Enabling 5-Step Consulting Lens & Tier `A/B/C/D` Boundary Guard, Anti-Pollution Apprenticeship Promotion Ladder, and 7-Metric Vertical Consulting Bench + 3-Stage Regression Gate |
 
 Your *agents* are never packaged — they're folders you own and version, like `AGENTS.md`.
 
