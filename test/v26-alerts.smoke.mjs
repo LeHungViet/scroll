@@ -964,7 +964,121 @@ async function run() {
     assert.equal(ledger.getCase(mbEmail.case.caseId).closedReason, 'low_priority_veto');
   });
 
-  console.log(`\nALL ${passed}/10 §51 Smart Alerts gates PASSED!`);
+  // ── T11: Rollup uses composeDigest/veto (no legacy card leak) + same-timestamp rephrase dedup ──
+  await test('T11: rollup routes through composeDigest/human prose (never [link-removed]) & dedupes same-timestamp rephrases', async () => {
+    const dir = tmpDir();
+    const now = DAY_10AM;
+    const ledger = createAlertLedger({
+      stateDir: dir,
+      shadowMode: false,
+      pinnedDomains: ['mbbank.com.vn', 'vercel.com', 'supabase.com'],
+      clock: () => now,
+    });
+
+    // 1. Same email paraphrased VN vs EN on two consecutive hourly polls (identical occurredAt + vendor + amount)
+    const p1 = ledger.ingestSignal({
+      signalId: 'ol_poll_1',
+      source: 'outlook',
+      isEmail: true,
+      trustedConnectorInbox: true,
+      fromDomain: 'mbbank.com.vn',
+      containerTitle: 'Outlook · mbbank.com.vn',
+      category: 'security_critical',
+      stage: 'security_alert',
+      securitySubkind: 'card_issuance',
+      amount: { currency: 'USD', value: 222.22 },
+      summary: 'Card transaction notice',
+      quote: 'Card 2260 charged 222.22 USD at vendor on 2026-11-23 08:25:13',
+      occurredAt: now - 30 * 60_000,
+      observedAt: now - 25 * 60_000,
+    });
+    const p2 = ledger.ingestSignal({
+      signalId: 'ol_poll_2',
+      source: 'outlook',
+      isEmail: true,
+      trustedConnectorInbox: true,
+      fromDomain: 'mbbank.com.vn',
+      containerTitle: 'Outlook · mbbank.com.vn',
+      category: 'security_critical',
+      stage: 'security_alert',
+      securitySubkind: 'card_issuance',
+      amount: { currency: 'USD', value: 222.22 },
+      summary: 'Card transaction notice',
+      quote: 'Different language paraphrase for 222.22 USD at same exact second',
+      occurredAt: now - 30 * 60_000,
+      observedAt: now,
+    });
+    assert.equal(p2.action, 'merged');
+    assert.equal(p2.case.distinctCount, 1, 'same-timestamp rephrase must have weight 0');
+    assert.equal(p2.case.securityBurst, false, 'same-timestamp rephrase must NOT trigger securityBurst');
+
+    // 2. Fallback renderRollupCard preserves vendor label cleanly (never [link-removed])
+    const ctrlPlain = createAlertsController({ ledger, ownerIds: ['1330502578'], format: 'html' });
+    const rawRollup = ctrlPlain.renderRollupCard([{ case: p2.case }]);
+    assert.ok(rawRollup.text.includes('mbbank.com.vn'), 'rollup fallback must keep vendor label readable');
+    assert.ok(!rawRollup.text.includes('[link-removed]'), 'rollup fallback must never redact vendor into [link-removed]');
+
+    // 3. Trigger unacked_p1_backpressure rollup (3 already-sent unacked P1 cases -> subsequent P1s go to rollup!)
+    const c2 = ledger.ingestSignal({
+      signalId: 'vc_1', source: 'gmail', isEmail: true, trustedConnectorInbox: true,
+      fromDomain: 'vercel.com', category: 'finance_emergency', stage: 'payment_failed',
+      summary: 'Vercel payment failed', occurredAt: now + 1000, observedAt: now + 1000,
+    });
+    const c3 = ledger.ingestSignal({
+      signalId: 'sb_1', source: 'gmail', isEmail: true, trustedConnectorInbox: true,
+      fromDomain: 'supabase.com', category: 'finance_emergency', stage: 'payment_failed',
+      summary: 'Supabase payment failed', occurredAt: now + 2000, observedAt: now + 2000,
+    });
+    // Mark 3 cases as already sent & unacked so subsequent P1 cases trigger rollup backpressure
+    for (const cid of [p2.case.caseId, c2.case.caseId, c3.case.caseId]) {
+      const r = ledger.reserveNotice(cid, { purpose: 'immediate', nowMs: now + 3000 });
+      ledger.confirmNotice(cid, r.notice.noticeId, { providerMessageId: `m_${cid}`, nowMs: now + 3000 });
+    }
+    const c4 = ledger.ingestSignal({
+      signalId: 'mb_4', source: 'outlook', isEmail: true, trustedConnectorInbox: true,
+      fromDomain: 'mbbank.com.vn', containerTitle: 'Outlook · mbbank.com.vn',
+      category: 'finance_emergency', stage: 'suspension_notice',
+      summary: 'MB final suspension warning', occurredAt: now + 4000, observedAt: now + 4000,
+    });
+    const c5 = ledger.ingestSignal({
+      signalId: 'vc_5', source: 'gmail', isEmail: true, trustedConnectorInbox: true,
+      fromDomain: 'vercel.com', category: 'finance_emergency', stage: 'payment_failed',
+      summary: 'Vercel duplicate minor notice', occurredAt: now + 4500, observedAt: now + 4500,
+    });
+    assert.equal(c4.decision.disposition, 'rollup', '4th unacked P1 must route to rollup');
+
+    const sentRollup = [];
+    let sawRollupFlag = false;
+    const ctrlHuman = createAlertsController({
+      ledger,
+      ownerIds: ['1330502578'],
+      style: 'human',
+      format: 'html',
+      composeDigest: async (items, opts) => {
+        if (opts?.isRollup) sawRollupFlag = true;
+        return {
+          text: 'Hey, quick heads-up on <b>MBBank</b> — please check directly in the app.',
+          parseMode: 'HTML',
+          vetoCaseIds: [c5.case.caseId],
+          buttons: [],
+        };
+      },
+    });
+    await ctrlHuman.dispatchDueNotices({
+      nowMs: now + 5000,
+      sendOwnerMessage: async (card, meta) => { sentRollup.push({ card, meta }); return { messageId: 'm_rollup_1' }; },
+    });
+    const rollupDeliveries = sentRollup.filter((x) => x.meta?.kind === 'rollup');
+    assert.equal(rollupDeliveries.length, 1, 'rollup must send via human composeDigest');
+    assert.equal(sawRollupFlag, true, 'composeDigest must receive isRollup: true');
+    assert.ok(rollupDeliveries[0].card.text.includes('quick heads-up on <b>MBBank</b>'));
+    assert.ok(!rollupDeliveries[0].card.text.includes('[link-removed]'));
+    assert.equal(rollupDeliveries[0].card.buttons.length, 0);
+    assert.equal(ledger.getCase(c5.case.caseId).state, 'closed', 'vetoed rollup case must be suppressed');
+    assert.ok(c4.case.caseId);
+  });
+
+  console.log(`\nALL ${passed}/11 §51 Smart Alerts gates PASSED!`);
 }
 
 run().catch((err) => {
