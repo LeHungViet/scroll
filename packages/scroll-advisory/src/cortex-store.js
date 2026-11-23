@@ -300,12 +300,72 @@ export function createDomainCortexStore({
     return stmts.listT1.all()
       .map(hydrateT1)
       .filter((r) => (!domain || r.domain === domain))
+      .filter((r) => !r.tags.includes('draft_horizon'))
       .filter((r) => r.validFrom <= target && (!r.validTo || r.validTo > target))
       .filter((r) => {
         if (!qTokens.length) return true;
         const hay = norm(`${r.citation} ${r.title} ${r.summary} ${r.tags.join(' ')}`);
         return qTokens.some((t) => hay.includes(t));
       });
+  }
+
+  // Forward Horizon Law Radar: returns enacted upcoming rules, expiring sunset policies, and pending drafts
+  // within the next `horizonMonths` (and optionally through the end of next fiscal year `YYYY+1-12-31`).
+  function getUpcomingT1Rules({
+    asOfDate = null,
+    horizonMonths = 12,
+    includeThroughNextFiscalYear = true,
+    domain = null,
+    query = '',
+  } = {}) {
+    const target = String(asOfDate || now().slice(0, 10));
+    const targetMs = Date.parse(`${target}T00:00:00Z`) || Date.now();
+    const targetDateObj = new Date(targetMs);
+    const plusMonths = new Date(targetMs);
+    plusMonths.setUTCMonth(plusMonths.getUTCMonth() + Math.max(1, Number(horizonMonths) || 12));
+    const nextFyEnd = `${targetDateObj.getUTCFullYear() + 1}-12-31`;
+    const plusIso = plusMonths.toISOString().slice(0, 10);
+    const horizonEnd = includeThroughNextFiscalYear && nextFyEnd > plusIso ? nextFyEnd : plusIso;
+    const qTokens = norm(query).split(/\s+/).filter((t) => t.length >= 2);
+
+    const out = [];
+    for (const r of stmts.listT1.all().map(hydrateT1)) {
+      if (domain && r.domain !== domain) continue;
+      if (qTokens.length) {
+        const hay = norm(`${r.citation} ${r.title} ${r.summary} ${r.tags.join(' ')}`);
+        if (!qTokens.some((t) => hay.includes(t))) continue;
+      }
+      const isDraft = r.tags.includes('draft_horizon');
+      const isWatch = r.tags.includes('horizon_watch');
+
+      if (!isDraft && r.validFrom > target && r.validFrom <= horizonEnd) {
+        const ms = Date.parse(`${r.validFrom}T00:00:00Z`) || targetMs;
+        out.push({
+          ...r,
+          horizonKind: 'enacted_upcoming',
+          milestoneDate: r.validFrom,
+          daysUntil: Math.max(0, Math.round((ms - targetMs) / 86_400_000)),
+        });
+      } else if (!isDraft && r.validFrom <= target && r.validTo && r.validTo >= target && r.validTo <= horizonEnd) {
+        const ms = Date.parse(`${r.validTo}T00:00:00Z`) || targetMs;
+        out.push({
+          ...r,
+          horizonKind: 'expiring_sunset',
+          milestoneDate: r.validTo,
+          daysUntil: Math.max(0, Math.round((ms - targetMs) / 86_400_000)),
+        });
+      } else if (isDraft || (isWatch && (!r.validTo || r.validTo >= target))) {
+        const refDate = r.validFrom > target ? r.validFrom : (r.validTo || horizonEnd);
+        const ms = Date.parse(`${refDate}T00:00:00Z`) || (targetMs + 180 * 86_400_000);
+        out.push({
+          ...r,
+          horizonKind: isDraft ? 'draft_pending' : 'policy_watch',
+          milestoneDate: refDate,
+          daysUntil: Math.max(0, Math.round((ms - targetMs) / 86_400_000)),
+        });
+      }
+    }
+    return out.sort((a, b) => a.daysUntil - b.daysUntil);
   }
 
   function upsertT2Case(c = {}) {
@@ -495,6 +555,7 @@ export function createDomainCortexStore({
     storage: adapter,
     upsertT1Rule,
     getEffectiveT1Rules,
+    getUpcomingT1Rules,
     upsertT2Case,
     searchT2Cases,
     recordT2Feedback,

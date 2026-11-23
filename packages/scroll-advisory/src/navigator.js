@@ -61,6 +61,7 @@ export function renderConsultingLensBlock({
   desk = null,
   t2Cases = [],
   t1Rules = [],
+  upcomingT1Rules = [],
   t3Resolution = null,
   activePolicy = null,
 } = {}) {
@@ -80,6 +81,20 @@ export function renderConsultingLensBlock({
     lines.push('[T1_EFFECTIVE_NORMATIVE_BOUNDS]');
     for (const r of t1Rules.slice(0, 3)) {
       lines.push(`- ${r.citation} (${r.validFrom}..${r.validTo || 'present'}${r.agencyName ? ` · ${r.agencyName}` : ''}): ${r.summary}`);
+    }
+  }
+
+  if (upcomingT1Rules.length) {
+    lines.push('[T1_UPCOMING_12M_HORIZON_RADAR (next 12m / through next fiscal year — cite current law first, then add 1 concise foresight note if relevant to client planning; NEVER confuse future/draft rules with today\'s active law)]');
+    for (const r of upcomingT1Rules.slice(0, 4)) {
+      const tag = r.horizonKind === 'enacted_upcoming'
+        ? `ENACTED · effective ${r.milestoneDate} (in ${r.daysUntil}d)`
+        : r.horizonKind === 'expiring_sunset'
+          ? `SUNSET · expires ${r.milestoneDate} (in ${r.daysUntil}d)`
+          : r.horizonKind === 'draft_pending'
+            ? `DRAFT · monitor (${r.milestoneDate})`
+            : `POLICY_WATCH · dynamic threshold`;
+      lines.push(`- [${tag}] ${r.citation}: ${r.summary}`);
     }
   }
 

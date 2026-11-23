@@ -62,6 +62,13 @@ export function createAdvisorySpecialistEngine({
     const activePolicy = desk.activePolicy;
     const t2Cases = cortex.searchT2Cases({ query, domain });
     const t1Rules = cortex.getEffectiveT1Rules({ asOfDate, domain, query });
+    const upcomingT1Rules = cortex.getUpcomingT1Rules({
+      asOfDate,
+      horizonMonths: 12,
+      includeThroughNextFiscalYear: true,
+      domain,
+      query,
+    });
     const softwareTarget = softwareHint || query;
     const t3Resolution = softwareTarget
       ? cortex.resolveSoftwareGuidance({
@@ -78,6 +85,7 @@ export function createAdvisorySpecialistEngine({
       desk,
       t2Cases,
       t1Rules,
+      upcomingT1Rules,
       t3Resolution,
       activePolicy,
     });
@@ -86,12 +94,14 @@ export function createAdvisorySpecialistEngine({
       desk,
       t2Cases,
       t1Rules,
+      upcomingT1Rules,
       t3Resolution,
       lensBlock,
       contextBlocks: [desk.contextBlock, lensBlock],
       verifiedGroundingText: [
         desk.verifiedGroundingText,
         ...t1Rules.slice(0, 3).map((r) => `${r.citation}: ${r.summary}`),
+        ...upcomingT1Rules.slice(0, 3).map((r) => `${r.citation} (${r.horizonKind} ${r.milestoneDate}): ${r.summary}`),
         ...t2Cases.slice(0, 3).map((c) => `${c.title}: ${c.verifiedFieldPath}`),
       ].filter(Boolean).join('\n'),
     };

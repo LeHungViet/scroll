@@ -740,6 +740,65 @@ try {
     }
   });
 
+  await t('9. 12-Month / Next-Fiscal-Year Forward Horizon Law Radar (enacted upcoming, sunset expiry & draft separation)', async () => {
+    const continuity = createContinuityEngine({ dbPath: ':memory:' });
+    const advisory = createAdvisorySpecialistEngine({ continuity, domain: 'compliance' });
+    try {
+      advisory.cortex.upsertT1Rule({
+        ruleId: 'r-sunset-2026',
+        domain: 'compliance',
+        citation: 'Resolution 204/2025',
+        title: 'Temporary 8% VAT relief',
+        summary: 'Reduced 8% VAT expires on 2026-12-31 unless extended.',
+        validFrom: '2025-07-01',
+        validTo: '2027-01-01',
+        tags: ['vat', '8%'],
+      });
+      advisory.cortex.upsertT1Rule({
+        ruleId: 'r-upcoming-2027',
+        domain: 'compliance',
+        citation: 'Decree 399/2026',
+        title: '2027 Regional Minimum Wage',
+        summary: 'Regional minimum wage rises from 2027-01-01.',
+        validFrom: '2027-01-01',
+        validTo: null,
+        tags: ['wage', 'vat'],
+      });
+      advisory.cortex.upsertT1Rule({
+        ruleId: 'r-draft-2027',
+        domain: 'compliance',
+        citation: 'Draft Circular replacing C133',
+        title: 'Draft SME Chart of Accounts',
+        summary: 'Draft streamlines 49 to 22 top-level accounts.',
+        validFrom: '2027-01-01',
+        validTo: null,
+        tags: ['draft_horizon', 'sme', 'vat'],
+      });
+
+      // Effective rules today (2026-11-24) ONLY include r-sunset-2026 (NOT 2027 enacted, NOT draft!)
+      const active = advisory.cortex.getEffectiveT1Rules({ asOfDate: '2026-11-24', domain: 'compliance', query: 'vat' });
+      assert.equal(active.length, 1);
+      assert.equal(active[0].ruleId, 'r-sunset-2026');
+
+      // Upcoming 12m/next-FY horizon returns ALL 3 with distinct horizonKind classifications
+      const upcoming = advisory.cortex.getUpcomingT1Rules({ asOfDate: '2026-11-24', domain: 'compliance', query: 'vat' });
+      assert.equal(upcoming.length, 3);
+      assert.ok(upcoming.some((r) => r.ruleId === 'r-sunset-2026' && r.horizonKind === 'expiring_sunset' && r.daysUntil === 38));
+      assert.ok(upcoming.some((r) => r.ruleId === 'r-upcoming-2027' && r.horizonKind === 'enacted_upcoming' && r.daysUntil === 38));
+      assert.ok(upcoming.some((r) => r.ruleId === 'r-draft-2027' && r.horizonKind === 'draft_pending'));
+
+      // Consulting lens embeds [T1_UPCOMING_12M_HORIZON_RADAR] cleanly
+      continuity.ingestUserMessage('t1', { sourceUpdateId: 'h1', senderId: 'u1', senderName: 'Boss', body: 'Check VAT 8% for next year' });
+      const turn = advisory.prepareAdvisoryTurn({ tenantId: 't1', query: 'vat 8%', asOfDate: '2026-11-24' });
+      assert.equal(turn.upcomingT1Rules.length, 3);
+      assert.ok(turn.lensBlock.includes('[T1_UPCOMING_12M_HORIZON_RADAR'));
+      assert.ok(turn.lensBlock.includes('Resolution 204/2025'));
+      assert.ok(turn.lensBlock.includes('Decree 399/2026'));
+    } finally {
+      continuity.close();
+    }
+  });
+
   console.log(`\nALL ${passed}/${passed} v2.6 continuity+advisory checks passed!`);
 } finally {
   fs.rmSync(tmpDir, { recursive: true, force: true });
