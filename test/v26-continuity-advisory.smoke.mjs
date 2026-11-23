@@ -21,6 +21,7 @@ import {
 } from '../packages/scroll-continuity/src/index.js';
 import {
   createAdvisorySpecialistEngine,
+  createSoftwareAtlasHarvester,
   evaluateDecisionFlipQuestion,
   runCounterfactualPreflight,
 } from '../packages/scroll-advisory/src/index.js';
@@ -642,6 +643,98 @@ try {
       assert.equal(replay.futureLeaks, 0);
       assert.equal(replay.statutoryMisses, 0);
       assert.equal(replay.wakeRecall, 1);
+    } finally {
+      continuity.close();
+    }
+  });
+
+  await t('8. Universal continuity_track tool + Two-Gear Software Atlas Harvester, TTL audit & 60s HITL approval', async () => {
+    const continuity = createContinuityEngine({ dbPath: ':memory:' });
+    const advisory = createAdvisorySpecialistEngine({ continuity, domain: 'compliance' });
+    try {
+      // continuity_track tool works cleanly for any agent (set_goal, park_item, list_register, resolve_item)
+      const trackTool = continuity.createTrackTool({ resolveTenantId: () => 't-exec' });
+      const g = await trackTool.execute({ action: 'set_goal', businessKey: 'g:launch', title: 'Ship v2 Release', dueAt: '2026-12-01' });
+      assert.equal(g.ok, true);
+      assert.equal(g.node.tier, 'APEX_GOAL');
+
+      const p = await trackTool.execute({
+        action: 'park_item',
+        title: 'Logo font tweak',
+        wakeCues: ['brand', 'logo'],
+        reopenCondition: 'Design review starts',
+      });
+      assert.equal(p.ok, true);
+      assert.equal(p.node.tier, 'PARKED_DORMANT');
+
+      const reg = await trackTool.execute({ action: 'list_register' });
+      assert.equal(reg.goals.length, 1);
+      assert.equal(reg.parked.length, 1);
+
+      const resolved = await trackTool.execute({ action: 'resolve_item', nodeId: g.node.nodeId });
+      assert.equal(resolved.ok, true);
+      assert.equal(resolved.node.status, 'achieved');
+
+      // Two-Gear Software Atlas Harvester: HTTP WAF/SPA automatically falls back to browserProbe!
+      advisory.cortex.upsertT3Atlas({
+        atlasId: 'sw-portal-1',
+        software: 'TaxPortal',
+        version: 'v3.0.0',
+        os: 'any',
+        goalMilestone: 'Login and verify status',
+        verifiedAt: '2025-01-01T00:00:00Z',
+        ttlDays: 30,
+      });
+      const harvester = createSoftwareAtlasHarvester({
+        cortex: advisory.cortex,
+        targets: [
+          {
+            id: 'tax-portal',
+            software: 'TaxPortal',
+            url: 'https://portal.example.test',
+            versionRegex: /TaxPortal\s+(v\d+\.\d+\.\d+)/i,
+            expectedMarkers: ['TaxPortal'],
+            atlasIds: ['sw-portal-1'],
+          },
+        ],
+        httpProbe: async () => ({ ok: false, status: 403, wafBlocked: true, text: 'Request Rejected', gear: 'http' }),
+        browserProbe: async () => ({
+          ok: true,
+          status: 200,
+          text: 'Welcome to TaxPortal v3.1.3 Official',
+          screenshotRef: '/state/atlas/taxportal.png',
+          contentHash: 'abc123',
+        }),
+      });
+
+      const beforeAudit = harvester.findExpiringEntries();
+      assert.equal(beforeAudit.expired.length, 1);
+
+      const harvest = await harvester.runHarvest();
+      assert.equal(harvest.ok, true);
+      assert.equal(harvest.verifiedTargets, 1);
+      assert.equal(harvest.results[0].gear, 'browser');
+      assert.equal(harvest.results[0].extractedVersion, 'v3.1.3');
+      assert.equal(harvest.refreshedEntries, 1);
+      assert.equal(harvest.ttlAudit.expired.length, 0);
+      assert.equal(advisory.cortex.resolveSoftwareGuidance({ software: 'TaxPortal' }).tier, 'A');
+
+      // Client screenshot -> pending_review -> 60s HITL approve -> verified Tier A!
+      const cand = advisory.cortex.recordClientScreenshotCandidate({
+        software: 'SignerTool',
+        os: 'macOS',
+        errorSignature: 'localhost refused',
+        screenshotRef: '/state/inbox/err.png',
+        goalMilestone: 'Complete signing',
+      });
+      assert.equal(harvester.listPendingCandidates().length, 1);
+      const appr = harvester.approveCandidate(cand.atlasId, {
+        verifiedWorkaround: 'Disable Chrome Local Network Access Checks and launch SignerTool from Applications',
+        approvedBy: 'lead-specialist',
+      });
+      assert.equal(appr.ok, true);
+      assert.equal(harvester.listPendingCandidates().length, 0);
+      assert.equal(advisory.cortex.resolveSoftwareGuidance({ software: 'SignerTool', os: 'macOS' }).tier, 'A');
     } finally {
       continuity.close();
     }

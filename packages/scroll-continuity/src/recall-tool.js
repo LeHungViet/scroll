@@ -233,3 +233,146 @@ export function createContinuityRecallTool({
     },
   };
 }
+
+// Universal POMR Goal & Pragmatic Backlog management tool for ANY long-running agent (assistants, coordinators, advisors).
+export function createContinuityTrackTool({
+  ledger,
+  problemRegister,
+  toolName = 'continuity_track',
+  resolveTenantId,
+} = {}) {
+  return {
+    name: toolName,
+    description:
+      'Track North-Star goals, active workstreams, mandatory deadlines, or silently park low-priority side items with wake_cues so they auto-reconnect later without nagging. Also lists or resolves tracked items.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['set_goal', 'track_item', 'park_item', 'resolve_item', 'list_register'],
+          description: 'Operation to perform on the continuity register.',
+        },
+        nodeId: { type: 'string', description: 'Optional existing nodeId for update/park/resolve.' },
+        businessKey: { type: 'string', description: 'Optional stable key to deduplicate the same goal/item.' },
+        title: { type: 'string', description: 'Short clear title of the goal or item.' },
+        summary: { type: 'string', description: 'Current concrete state or context.' },
+        dueAt: { type: 'string', description: 'Optional ISO deadline date (YYYY-MM-DD).' },
+        hasLegalConsequence: { type: 'boolean', description: 'True for hard legal/penalty deadlines (locks SMR=0%).' },
+        wakeCues: { type: 'array', items: { type: 'string' }, description: 'Keywords that automatically wake a parked item.' },
+        reopenCondition: { type: 'string', description: 'Condition that reopens a parked item.' },
+        autoExpireDays: { type: 'integer', description: 'Days until a non-legal parked item silently archives (default 30).' },
+      },
+      required: ['action'],
+    },
+    async execute(args = {}, ctx = {}) {
+      const tenantId = typeof resolveTenantId === 'function' ? resolveTenantId(ctx, args) : (args.tenantId || ctx.tenantId || 'default');
+      const action = String(args.action || 'list_register');
+      if (action === 'list_register') {
+        const reg = problemRegister.listRegister(tenantId);
+        return {
+          ok: true,
+          tenantId,
+          goals: reg.goals.map((g) => ({ nodeId: g.nodeId, title: g.title, status: g.status, dueAt: g.dueAt })),
+          statutory: reg.statutory.map((s) => ({ nodeId: s.nodeId, title: s.title, status: s.status, dueAt: s.dueAt })),
+          active: reg.active.map((a) => ({ nodeId: a.nodeId, title: a.title, status: a.status })),
+          parked: reg.parked.map((p) => ({ nodeId: p.nodeId, title: p.title, wakeCues: p.wakeCues, reopenCondition: p.reopenCondition })),
+        };
+      }
+
+      let headSeq = ledger.getHeadSeq(tenantId);
+      if (headSeq === 0) {
+        headSeq = ledger.appendEvent(tenantId, {
+          eventType: 'system_track',
+          body: String(args.title || args.summary || action),
+        }).event.seq;
+      }
+      const sup = [{ sourceSeq: headSeq, sourceType: 'tool_output', excerptRef: `${toolName}:${action}` }];
+
+      if (action === 'set_goal') {
+        const existing = args.businessKey ? ledger.findNodeByBusinessKey(tenantId, args.businessKey) : null;
+        const res = problemRegister.registerProblem(tenantId, {
+          nodeId: args.nodeId || existing?.nodeId,
+          kind: 'goal',
+          businessKey: args.businessKey || null,
+          title: args.title || existing?.title || 'Active Goal',
+          summary: args.summary || existing?.summary || '',
+          dueAt: args.dueAt ?? existing?.dueAt ?? null,
+          knownFromSeq: headSeq,
+          supports: sup,
+        });
+        return { ok: true, action, node: { nodeId: res.node.nodeId, tier: res.node.priorityTier, status: res.node.status, title: res.node.title } };
+      }
+
+      if (action === 'track_item') {
+        const existing = args.businessKey ? ledger.findNodeByBusinessKey(tenantId, args.businessKey) : null;
+        const res = problemRegister.registerProblem(tenantId, {
+          nodeId: args.nodeId || existing?.nodeId,
+          kind: args.hasLegalConsequence ? 'obligation' : 'workstream',
+          businessKey: args.businessKey || null,
+          title: args.title || existing?.title || 'Tracked Workstream',
+          summary: args.summary || existing?.summary || '',
+          dueAt: args.dueAt ?? existing?.dueAt ?? null,
+          hasLegalConsequence: Boolean(args.hasLegalConsequence),
+          userAskingNow: true,
+          knownFromSeq: headSeq,
+          supports: sup,
+        });
+        return { ok: true, action, node: { nodeId: res.node.nodeId, tier: res.node.priorityTier, status: res.node.status, title: res.node.title } };
+      }
+
+      if (action === 'park_item') {
+        const expireDays = Math.max(1, Math.min(180, Number(args.autoExpireDays) || 30));
+        const autoExpireAt = new Date(Date.now() + expireDays * 86_400_000).toISOString();
+        if (args.nodeId) {
+          const parked = problemRegister.parkProblem(tenantId, args.nodeId, {
+            sourceSeq: headSeq,
+            sourceType: 'tool_output',
+            reopenCondition: args.reopenCondition || null,
+            wakeCues: Array.isArray(args.wakeCues) ? args.wakeCues : [],
+            autoExpireAt,
+          });
+          return { ok: true, action, node: { nodeId: parked.nodeId, tier: parked.priorityTier, status: parked.status, title: parked.title } };
+        }
+        const res = problemRegister.registerProblem(tenantId, {
+          kind: 'parked_item',
+          businessKey: args.businessKey || null,
+          title: args.title || 'Parked Side Item',
+          summary: args.summary || '',
+          hasLegalConsequence: false,
+          userAskingNow: false,
+          wakeCues: Array.isArray(args.wakeCues) ? args.wakeCues : [],
+          reopenCondition: args.reopenCondition || null,
+          autoExpireAt,
+          knownFromSeq: headSeq,
+          supports: sup,
+        });
+        return { ok: true, action, node: { nodeId: res.node.nodeId, tier: res.node.priorityTier, status: res.node.status, title: res.node.title } };
+      }
+
+      if (action === 'resolve_item') {
+        const target = args.nodeId
+          ? ledger.getNodeAt(tenantId, args.nodeId)
+          : (args.businessKey ? ledger.findNodeByBusinessKey(tenantId, args.businessKey) : null);
+        if (!target) return { ok: false, error: 'node_not_found' };
+        const updated = ledger.upsertNodeRevision(tenantId, {
+          nodeId: target.nodeId,
+          kind: target.kind,
+          businessKey: target.businessKey,
+          priorityTier: target.priorityTier,
+          title: target.title,
+          summary: args.summary || target.summary,
+          status: target.kind === 'goal' ? 'achieved' : 'resolved',
+          epistemicLevel: target.epistemicLevel,
+          knownFromSeq: headSeq,
+          hasLegalConsequence: target.hasLegalConsequence,
+          dueAt: target.dueAt,
+          supports: sup,
+        });
+        return { ok: true, action, node: { nodeId: updated.nodeId, status: updated.status, title: updated.title } };
+      }
+
+      return { ok: false, error: `unsupported_action:${action}` };
+    },
+  };
+}

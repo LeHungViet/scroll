@@ -10,6 +10,7 @@
     "./navigator": "./src/navigator.js",
     "./apprenticeship": "./src/apprenticeship.js",
     "./bench": "./src/specialist-bench.js",
+    "./harvester": "./src/atlas-harvester.js",
     "./package.json": "./package.json"
   },
   "engines": {

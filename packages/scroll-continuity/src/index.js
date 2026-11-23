@@ -14,7 +14,7 @@ import {
 import { createProblemRegister, evaluateParkingFlags } from './problem-register.js';
 import { createClientImpedanceProfiler, isDeepDetailRequested } from './client-impedance.js';
 import { createSleepTimeWorker } from './sleep-worker.js';
-import { buildWorkingDesk, createContinuityRecallTool } from './recall-tool.js';
+import { buildWorkingDesk, createContinuityRecallTool, createContinuityTrackTool } from './recall-tool.js';
 import { runContinuityReplay } from './replay-eval.js';
 
 export {
@@ -33,6 +33,7 @@ export {
   createSleepTimeWorker,
   buildWorkingDesk,
   createContinuityRecallTool,
+  createContinuityTrackTool,
   runContinuityReplay,
 };
 
@@ -171,6 +172,10 @@ export function createContinuityEngine({
     return createContinuityRecallTool({ ledger, problemRegister: problems, ...opts });
   }
 
+  function createTrackTool(opts = {}) {
+    return createContinuityTrackTool({ ledger, problemRegister: problems, ...opts });
+  }
+
   return {
     ledger,
     problems,
@@ -181,6 +186,7 @@ export function createContinuityEngine({
     recordAssistantReply,
     buildWorkingDesk: getDesk,
     createRecallTool,
+    createTrackTool,
     backupTo: (dest) => ledger.backupTo(dest),
     verifyIntegrity: () => ledger.verifyIntegrity(),
     close: () => ledger.close(),

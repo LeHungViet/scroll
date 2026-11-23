@@ -12,6 +12,7 @@ import {
   computeSevenMetricScorecard,
   evaluateThreeStageRegressionGate,
 } from './specialist-bench.js';
+import { createSoftwareAtlasHarvester, defaultHttpProbe } from './atlas-harvester.js';
 
 export {
   createDomainCortexStore,
@@ -23,6 +24,8 @@ export {
   runStaticSafetyLinter,
   computeSevenMetricScorecard,
   evaluateThreeStageRegressionGate,
+  createSoftwareAtlasHarvester,
+  defaultHttpProbe,
 };
 
 export function createAdvisorySpecialistEngine({

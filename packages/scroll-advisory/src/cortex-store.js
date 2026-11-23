@@ -380,7 +380,7 @@ export function createDomainCortexStore({
       String(entry.status || 'verified'),
       ts
     );
-    return listT3Atlas().find((a) => a.atlasId === atlasId);
+    return listT3Atlas({ includePending: true }).find((a) => a.atlasId === atlasId);
   }
 
   function recordClientScreenshotCandidate({ software, os = 'any', errorSignature = '', screenshotRef, goalMilestone = '' } = {}) {
