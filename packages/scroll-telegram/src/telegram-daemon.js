@@ -1228,8 +1228,12 @@ export async function createTelegramFleetDaemon(config = {}, {
     let rotateProviderThread = false;
     let skipTyping = false;
     let gciMeta = null;
+    let modelOverride = null;
+    let effortOverride = null;
+    let serviceTierOverride = null;
+    let escalationReason = null;
 
-    // GCI v2 pre-dispatch gate (runs BEFORE sending `typing` so dropped active_latch/soft_mention turns have 0.0% phantom typing!)
+    // GCI v2 & domain pre-dispatch gate (runs BEFORE sending `typing` so dropped active_latch/soft_mention turns have 0.0% phantom typing!)
     for (const h of pluginHooks) {
       if (typeof h.beforeBurstDispatch === 'function') {
         try {
@@ -1250,6 +1254,8 @@ export async function createTelegramFleetDaemon(config = {}, {
             triggerReason,
             burstKey,
             scopeKey,
+            contextBlocks,
+            gciMeta,
           });
           if (!decision || typeof decision !== 'object') continue;
           if (decision.action === 'drop') {
@@ -1268,8 +1274,11 @@ export async function createTelegramFleetDaemon(config = {}, {
               return;
             }
           }
-          if (Array.isArray(decision.contextBlocks)) {
+          if (Array.isArray(decision.contextBlocks) && decision.contextBlocks.length) {
             contextBlocks = [...contextBlocks, ...decision.contextBlocks];
+            if (Array.isArray(freshThreadContextBlocks) && !Array.isArray(decision.freshThreadContextBlocks)) {
+              freshThreadContextBlocks = [...freshThreadContextBlocks, ...decision.contextBlocks];
+            }
           }
           if (Array.isArray(decision.freshThreadContextBlocks)) {
             freshThreadContextBlocks = [...(replyBlock ? [replyBlock] : []), ...decision.freshThreadContextBlocks];
@@ -1283,10 +1292,19 @@ export async function createTelegramFleetDaemon(config = {}, {
           if (decision.rotateProviderThread !== undefined) rotateProviderThread = Boolean(decision.rotateProviderThread);
           if (decision.skipTyping !== undefined) skipTyping = Boolean(decision.skipTyping);
           if (decision.gciMeta) gciMeta = decision.gciMeta;
+          if (decision.modelOverride) modelOverride = String(decision.modelOverride);
+          if (decision.effortOverride) effortOverride = String(decision.effortOverride);
+          if (decision.serviceTierOverride) serviceTierOverride = String(decision.serviceTierOverride);
+          if (decision.escalationReason) escalationReason = String(decision.escalationReason);
         } catch (err) {
           logger.warn?.(`[scroll-telegram:${bot.id}] beforeBurstDispatch error:`, err?.message || err);
         }
       }
+    }
+    if (modelOverride && modelOverride !== bot.model) {
+      logger.info?.(
+        `[scroll-telegram:${bot.id}] turn escalated: ${bot.model || 'default'} -> ${modelOverride} (${effortOverride || bot.effort || 'default'}/${serviceTierOverride || bot.serviceTier || 'default'})${escalationReason ? ` [${escalationReason}]` : ''} (${chatTitle || chatId})`
+      );
     }
 
     let typingTimer = null;
@@ -1368,9 +1386,9 @@ export async function createTelegramFleetDaemon(config = {}, {
         deferCommit: effectiveDeferCommit,
         rotateProviderThread,
         signal: abortController.signal,
-        model: bot.model,
-        effort: bot.effort,
-        serviceTier: bot.serviceTier || null,
+        model: modelOverride || bot.model,
+        effort: effortOverride || bot.effort,
+        serviceTier: serviceTierOverride || bot.serviceTier || null,
         delegatedTools: activeGrant ? activeGrant.allowedTools : null,
       });
       const turn = bot.turnRecovery?.enabled
