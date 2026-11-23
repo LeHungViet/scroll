@@ -413,6 +413,7 @@ export async function createTelegramFleetDaemon(config = {}, {
         skipMemoryWrite: job.metadata?.writeMemory !== true,
         model: job.metadata?.model || bot.model,
         effort: job.metadata?.effort || bot.effort,
+        serviceTier: job.metadata?.serviceTier || bot.serviceTier || null,
         ...(Array.isArray(job.metadata?.toolsAllow) ? { toolsAllow: job.metadata.toolsAllow } : {}),
       });
     }
@@ -683,6 +684,7 @@ export async function createTelegramFleetDaemon(config = {}, {
         contextBlocks,
         model: bot.model,
         effort: bot.effort,
+        serviceTier: bot.serviceTier || null,
         delegatedTools: activeGrant ? activeGrant.allowedTools : null,
       });
       bot.stats.turns++;
@@ -784,6 +786,7 @@ export async function createTelegramFleetDaemon(config = {}, {
       provider = pickProvider('codex-app-server', {
         model: bCfg.model || null,
         effort: bCfg.effort || null,
+        serviceTier: bCfg.serviceTier || config.serviceTier || null,
         client: sharedCodexClient,
       });
     } else {
@@ -806,6 +809,7 @@ export async function createTelegramFleetDaemon(config = {}, {
       approvalStore,
       model: bCfg.model || null,
       effort: bCfg.effort || null,
+      serviceTier: bCfg.serviceTier || config.serviceTier || null,
       groupPolicy: bCfg.groupPolicy || 'mention',
       groupHeldFallback: bCfg.groupHeldFallback || config.groupHeldFallback || DEFAULT_GROUP_HELD_FALLBACK,
       downloadUntriggeredGroupMedia: Boolean(bCfg.downloadUntriggeredGroupMedia),
@@ -834,6 +838,7 @@ export async function createTelegramFleetDaemon(config = {}, {
       provider,
       model: botObj.model,
       effort: botObj.effort,
+      serviceTier: botObj.serviceTier,
       authStore,
       approvalStore,
       scheduler,
@@ -849,7 +854,7 @@ export async function createTelegramFleetDaemon(config = {}, {
       groundingRetryMax: bCfg.groundingRetryMax ?? config.groundingRetryMax ?? 1,
       requestApproval: (req) => requestHitlApproval(botObj, req),
       compactAtChars: Number(bCfg.compactAtChars || 48_000),
-      keepRecentTurns: Number(bCfg.keepRecentTurns || 12),
+      keepRecentTurns: Number(bCfg.keepRecentTurns || 24),
       acquireLock: bCfg.acquireLock !== false,
     });
     botObj.runtime = runtime;
