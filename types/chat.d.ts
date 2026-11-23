@@ -37,6 +37,50 @@ export function createAlertsController(opts: Record<string, unknown>): Record<st
 export function sanitizeUntrustedQuote(text: string, opts?: { maxChars?: number }): string;
 export function buildGoogleCalendarTemplateUrl(opts: Record<string, unknown>): string | null;
 
+export const DEFAULT_TURN_RECOVERY_CONFIG: Readonly<{
+  enabled: boolean;
+  ttlMs: number;
+  maxEntries: number;
+  inlineRetryDelaysMs: number[];
+  deferredRetryDelaysMs: number[];
+  maxStartupReplays: number;
+  startupDelayMs: number;
+  startupStaggerMs: number;
+}>;
+export const TRANSIENT_PROVIDER_ERROR_RE: RegExp;
+export function isTransientProviderError(err: unknown, extraMatchers?: Array<RegExp | ((err: unknown, msg: string) => boolean)> | null): boolean;
+export function resolveTurnRecoveryConfig(globalCfg?: Record<string, unknown>, agentCfg?: Record<string, unknown>): typeof DEFAULT_TURN_RECOVERY_CONFIG;
+export function readPendingTurnJournal(filePath: string, opts?: { ttlMs?: number; nowMs?: number }): Array<Record<string, unknown>>;
+export function writePendingTurnJournal(filePath: string, entries: Array<Record<string, unknown>>, opts?: { maxEntries?: number }): void;
+export function createTurnRecoveryController(opts?: {
+  stateDir?: string | null;
+  channel?: string;
+  accountId?: string;
+  config?: Record<string, unknown>;
+  lang?: string;
+  cues?: Record<string, unknown> | null;
+  isTransientError?: (err: unknown) => boolean;
+  logger?: Pick<Console, 'info' | 'warn' | 'error'>;
+}): {
+  readonly enabled: boolean;
+  readonly config: typeof DEFAULT_TURN_RECOVERY_CONFIG;
+  readonly channel: string;
+  readonly accountId: string;
+  readonly journalPath: string | null;
+  scopeKeyFor(conversationId: string, threadId?: string | number | null): string;
+  listPending(opts?: { nowMs?: number }): Array<Record<string, unknown>>;
+  getPending(opts: { conversationId: string; threadId?: string | number | null; nowMs?: number }): Record<string, unknown> | null;
+  observeIncoming(opts: { conversationId: string; threadId?: string | number | null; messageId: string | number; isGroup?: boolean; isCommand?: boolean; receivedAt?: number }): void;
+  cancelPendingTimer(opts: { conversationId: string; threadId?: string | number | null }): void;
+  beginTurn(opts: Record<string, unknown>): { turnSeq: number; scopeKey: string; carryoverBlock: string | null; supersededEntry: Record<string, unknown> | null };
+  runWithInlineRetry<T>(opts: { fn: (attempt: number) => Promise<T>; signal?: AbortSignal | null; isRecoveryReplay?: boolean; onRetry?: (info: Record<string, unknown>) => void }): Promise<T>;
+  completeTurn(opts: { conversationId: string; threadId?: string | number | null; messageId?: string | number | null }): void;
+  handleTurnFailure(opts: Record<string, unknown>): Record<string, unknown>;
+  scheduleStartupRecovery(opts: Record<string, unknown>): { scheduled: number };
+  isCurrentSeq(opts: { conversationId: string; threadId?: string | number | null; expectedSeq: number }): boolean;
+  stop(): void;
+};
+
 export function createScrollChatRuntime(opts: {
   agentName: string;
   deploymentDir?: string;

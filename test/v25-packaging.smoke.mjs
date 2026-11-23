@@ -106,6 +106,7 @@ assert.equal(typeof scroll.runChatEvals, 'function');
 assert.equal(typeof scroll.openSkills, 'function');
 assert.equal(typeof memMod.openStore, 'function');
 assert.equal(typeof chatSdk.createScrollChatRuntime, 'function');
+assert.equal(typeof chatSdk.createTurnRecoveryController, 'function');
 assert.equal(typeof tgMod.createTelegramFleetDaemon, 'function');
 
 const work = path.join(process.cwd(), 'deploy');

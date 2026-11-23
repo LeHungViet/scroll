@@ -21,6 +21,8 @@ import {
   createLongTaskRunner,
   createAdminController,
   createApprovalStore,
+  createTurnRecoveryController,
+  resolveTurnRecoveryConfig,
   ADMIN_CALLBACK_NAMESPACE,
 } from '@agentpro/scroll/chat';
 import { createTelegramApi } from './telegram-api.js';
@@ -662,6 +664,16 @@ export async function createTelegramFleetDaemon(config = {}, {
       dateMs,
     };
 
+    // Notify channel-agnostic Turn Recovery WAL of inbound non-command DM messages
+    bot.turnRecovery?.observeIncoming({
+      conversationId: chatId,
+      threadId,
+      messageId: msg.message_id,
+      isGroup,
+      isCommand: String(rawText || '').trim().startsWith('/'),
+      receivedAt: dateMs,
+    });
+
     // Allow plugins to observe every message (e.g. GCI v2 Layer 1 Ring + literalVault) BEFORE downloading heavy media bytes
     for (const h of pluginHooks) {
       if (typeof h.onRawMessage === 'function') {
@@ -846,6 +858,135 @@ export async function createTelegramFleetDaemon(config = {}, {
     });
   }
 
+  async function deliverRecoveredTurn(bot, {
+    entry,
+    recoveryCue,
+    expectedSeq,
+    deferredAttempt = 0,
+    isStartupRecovery = false,
+  }) {
+    if (stopped || bot.paused || adminController.globalPaused) return 'aborted';
+    const cid = String(entry.chatId || entry.conversationId || '');
+    const tid = entry.threadId ?? null;
+    if (!bot.turnRecovery?.isCurrentSeq({ conversationId: cid, threadId: tid, expectedSeq })) {
+      return 'superseded';
+    }
+    const isGrp = Boolean(entry.isGroup);
+    const baseCtx = Array.isArray(entry.contextBlocks) ? entry.contextBlocks : [];
+    const recCtx = recoveryCue ? [...baseCtx, recoveryCue] : baseCtx;
+    try {
+      const turn = await bot.turnRecovery.runWithInlineRetry({
+        isRecoveryReplay: true,
+        fn: () => bot.runtime.sendTurn({
+          conversationId: cid,
+          text: entry.text,
+          sender: entry.sender,
+          participants: entry.participants || undefined,
+          isGroup: isGrp,
+          channel: 'telegram',
+          chatTitle: entry.chatTitle || entry.roomTitle || null,
+          threadId: tid,
+          messageId: entry.messageId,
+          messageIds: Array.isArray(entry.messageIds) ? entry.messageIds : [entry.messageId],
+          attachments: Array.isArray(entry.attachments) ? entry.attachments : [],
+          contextBlocks: recCtx,
+          freshThreadContextBlocks: Array.isArray(entry.freshThreadContextBlocks)
+            ? entry.freshThreadContextBlocks
+            : undefined,
+          triggerKind: entry.triggerKind || (isGrp ? 'hard' : 'dm'),
+          deferCommit: true,
+          rotateProviderThread: Boolean(entry.rotateProviderThread),
+          model: bot.model,
+          effort: bot.effort,
+          serviceTier: bot.serviceTier || null,
+          delegatedTools: entry.delegatedTools || null,
+          _scrollRecoveryReplay: true,
+          _scrollStartupRecovery: isStartupRecovery,
+        }),
+        onRetry: ({ attempt, maxAttempts, delayMs, err }) => {
+          logger.warn?.(
+            `[scroll-telegram:${bot.id}] transient recovery error (${cid}, attempt ${attempt}/${maxAttempts}): ${String(err?.message || err)} — retrying in ${delayMs}ms`,
+          );
+        },
+      });
+      if (stopped || !bot.turnRecovery.isCurrentSeq({ conversationId: cid, threadId: tid, expectedSeq })) {
+        return 'superseded';
+      }
+      if (turn?.aborted) return 'aborted';
+      if (turn?.noReply) {
+        bot.turnRecovery.completeTurn({ conversationId: cid, threadId: tid, messageId: entry.messageId });
+        return 'no_reply';
+      }
+      bot.stats.turns++;
+      const delivery = turn?._apDeliveryReceipt
+        ? turn._apDeliveryReceipt
+        : await deliverSafeReply(bot, {
+            chatId: cid,
+            isGroup: isGrp,
+            chatTitle: entry.chatTitle || entry.roomTitle || null,
+            replyToMessageId: entry.messageId,
+            threadId: tid,
+            turn,
+          });
+      bot.turnRecovery.completeTurn({ conversationId: cid, threadId: tid, messageId: entry.messageId });
+      if (delivery?.delivered && !delivery?.silent) {
+        for (const h of pluginHooks) {
+          if (typeof h.onReplyDelivered === 'function') {
+            try {
+              await h.onReplyDelivered({
+                bot,
+                chatId: cid,
+                isGroup: isGrp,
+                threadId: tid,
+                chatTitle: entry.chatTitle || entry.roomTitle || null,
+                sender: entry.sender,
+                triggerKind: entry.triggerKind || (isGrp ? 'hard' : 'dm'),
+                triggerReason: isStartupRecovery ? 'startup_recovery' : 'deferred_recovery',
+                replyToMessageId: entry.messageId,
+                messageId: entry.messageId,
+                messageIds: Array.isArray(entry.messageIds) ? entry.messageIds : [entry.messageId],
+                turn,
+                delivery,
+                gciMeta: null,
+              });
+            } catch { /* isolate */ }
+          }
+        }
+      }
+      return 'delivered';
+    } catch (err) {
+      const failRes = bot.turnRecovery.handleTurnFailure({
+        err,
+        turnInput: entry,
+        turnSeq: expectedSeq,
+        deferredAttempt,
+        isStartupRecovery,
+        isRecoverable: true,
+        onDeferredRetry: ({ entry: nextEntry, deferredAttempt: nextAtt, recoveryCue: nextCue, expectedSeq: nextSeq }) =>
+          deliverRecoveredTurn(bot, {
+            entry: nextEntry,
+            recoveryCue: nextCue,
+            expectedSeq: nextSeq,
+            deferredAttempt: nextAtt,
+            isStartupRecovery,
+          }),
+      });
+      if (failRes?.action === 'deferred') return 'deferred';
+      bot.stats.errors++;
+      const errMsg = String(err?.message || err);
+      logger.error?.(`[scroll-telegram:${bot.id}] recovery turn error:`, errMsg);
+      const ownerDm = bot.ownerIds?.[0] || ownerIds?.[0] || null;
+      if (ownerDm) {
+        const where = isGrp ? `${entry.chatTitle || 'group'} (${cid})` : `DM (${cid})`;
+        await bot.api.sendMessage({
+          chatId: ownerDm,
+          text: `[${bot.id} · Recovery Error in ${where}] ${errMsg.slice(0, 400)}`,
+        }).catch(() => {});
+      }
+      return 'failed';
+    }
+  }
+
   async function processBurst(bot, item) {
     if (bot.paused || adminController.globalPaused) return;
     let {
@@ -952,6 +1093,37 @@ export async function createTelegramFleetDaemon(config = {}, {
       ? [sender, { id: 'group-member', channelId: 'tg:group-unknown', name: 'Member' }]
       : [sender];
 
+    const isRecoverableTurn = Boolean(bot.turnRecovery?.enabled && !isSoftOrLatch && messageId != null);
+    const recBegin = bot.turnRecovery?.enabled
+      ? bot.turnRecovery.beginTurn({
+          conversationId: chatId,
+          threadId,
+          messageId,
+          messageIds,
+          isGroup,
+          roomTitle: chatTitle,
+          chatTitle,
+          sender,
+          participants,
+          text,
+          attachments,
+          contextBlocks,
+          freshThreadContextBlocks,
+          triggerKind,
+          rotateProviderThread,
+          delegatedTools: activeGrant ? activeGrant.allowedTools : null,
+          getHistory: (cid) => bot.runtime?.getHistory?.(cid) || [],
+          recoverable: isRecoverableTurn,
+        })
+      : { turnSeq: 0, carryoverBlock: null };
+    if (recBegin.carryoverBlock) {
+      contextBlocks = [...contextBlocks, recBegin.carryoverBlock];
+      if (Array.isArray(freshThreadContextBlocks)) {
+        freshThreadContextBlocks = [...freshThreadContextBlocks, recBegin.carryoverBlock];
+      }
+    }
+    const effectiveDeferCommit = deferCommit || isSoftOrLatch || isRecoverableTurn;
+
     const abortController = new AbortController();
     const inflightEntry = {
       senderId: sender?.id ? String(sender.id) : null,
@@ -964,7 +1136,7 @@ export async function createTelegramFleetDaemon(config = {}, {
     if (isGroup) inflightBursts.set(scopeKey, inflightEntry);
 
     try {
-      const turn = await bot.runtime.sendTurn({
+      const invokeLiveTurn = () => bot.runtime.sendTurn({
         conversationId: chatId,
         text,
         sender,
@@ -979,7 +1151,7 @@ export async function createTelegramFleetDaemon(config = {}, {
         contextBlocks,
         freshThreadContextBlocks,
         triggerKind,
-        deferCommit: deferCommit || isSoftOrLatch,
+        deferCommit: effectiveDeferCommit,
         rotateProviderThread,
         signal: abortController.signal,
         model: bot.model,
@@ -987,10 +1159,24 @@ export async function createTelegramFleetDaemon(config = {}, {
         serviceTier: bot.serviceTier || null,
         delegatedTools: activeGrant ? activeGrant.allowedTools : null,
       });
+      const turn = bot.turnRecovery?.enabled
+        ? await bot.turnRecovery.runWithInlineRetry({
+            fn: invokeLiveTurn,
+            signal: abortController.signal,
+            onRetry: ({ attempt, maxAttempts, delayMs, err }) => {
+              logger.warn?.(
+                `[scroll-telegram:${bot.id}] transient turn error (${chatId}, attempt ${attempt}/${maxAttempts}): ${String(err?.message || err)} — auto-retrying in ${delayMs}ms`,
+              );
+            },
+          })
+        : await invokeLiveTurn();
       if (turn?.aborted || inflightEntry.preempted || abortController.signal.aborted) {
         return;
       }
       if (turn?.noReply) {
+        if (isRecoverableTurn) {
+          bot.turnRecovery?.completeTurn({ conversationId: chatId, threadId, messageId });
+        }
         return;
       }
       bot.stats.turns++;
@@ -1005,6 +1191,9 @@ export async function createTelegramFleetDaemon(config = {}, {
             threadId,
             turn,
           });
+      if (isRecoverableTurn) {
+        bot.turnRecovery?.completeTurn({ conversationId: chatId, threadId, messageId });
+      }
       if (delivery?.delivered && !delivery?.silent) {
         for (const h of pluginHooks) {
           if (typeof h.onReplyDelivered === 'function') {
@@ -1033,15 +1222,52 @@ export async function createTelegramFleetDaemon(config = {}, {
       if (inflightEntry.preempted || abortController.signal.aborted || err?.name === 'AbortError') {
         return;
       }
+      const failRes = bot.turnRecovery?.enabled
+        ? bot.turnRecovery.handleTurnFailure({
+            err,
+            turnInput: {
+              conversationId: chatId,
+              chatId,
+              threadId,
+              messageId,
+              messageIds,
+              isGroup,
+              chatTitle,
+              roomTitle: chatTitle,
+              sender,
+              participants,
+              text,
+              attachments,
+              contextBlocks,
+              freshThreadContextBlocks,
+              triggerKind,
+              rotateProviderThread,
+              delegatedTools: activeGrant ? activeGrant.allowedTools : null,
+            },
+            turnSeq: recBegin.turnSeq,
+            deferredAttempt: 0,
+            isStartupRecovery: false,
+            isRecoverable: isRecoverableTurn,
+            onDeferredRetry: ({ entry, deferredAttempt, recoveryCue, expectedSeq }) =>
+              deliverRecoveredTurn(bot, {
+                entry,
+                recoveryCue,
+                expectedSeq,
+                deferredAttempt,
+                isStartupRecovery: false,
+              }),
+          })
+        : null;
       bot.stats.errors++;
       const errMsg = String(err?.message || err);
-      logger.error?.(`[scroll-telegram:${bot.id}] turn error:`, errMsg);
+      logger.error?.(`[scroll-telegram:${bot.id}] turn error${failRes?.action === 'deferred' ? ' (scheduled silent recovery)' : ''}:`, errMsg);
       const ownerDm = bot.ownerIds?.[0] || ownerIds?.[0] || null;
       if (ownerDm) {
         const where = isGroup ? `${chatTitle || 'group'} (${chatId})` : `DM (${chatId})`;
+        const tag = failRes?.action === 'deferred' ? 'Auto-Recovering' : 'Error';
         await bot.api.sendMessage({
           chatId: ownerDm,
-          text: `[${bot.id} · Error in ${where}] ${errMsg.slice(0, 400)}`,
+          text: `[${bot.id} · ${tag} in ${where}] ${errMsg.slice(0, 400)}`,
         }).catch(() => {});
       }
     } finally {
@@ -1199,6 +1425,16 @@ export async function createTelegramFleetDaemon(config = {}, {
     });
     botObj.runtime = runtime;
     botObj.tools = runtime.tools;
+    const agentLang = runtime?.agent?.identity?.language || bCfg.language || config.language || 'en';
+    botObj.turnRecovery = createTurnRecoveryController({
+      stateDir,
+      channel: 'telegram',
+      accountId: botObj.id,
+      config: resolveTurnRecoveryConfig(config.turnRecovery || {}, bCfg.turnRecovery || {}),
+      lang: agentLang,
+      cues: bCfg.turnRecovery?.cues || config.turnRecovery?.cues || null,
+      logger,
+    });
     if (runtime.tools) {
       longTasks.registerTools({ tools: runtime.tools, bot: botObj, ownerIds: botOwnerIds, groupGrants });
     }
@@ -1355,6 +1591,7 @@ export async function createTelegramFleetDaemon(config = {}, {
         canReadAllGroupMessages: b.canReadAllGroupMessages,
         privacyModeWarning: Boolean(b.groupPolicy !== 'off' && b.canReadAllGroupMessages === false),
         memory: b.runtime?.memoryTracker?.getStats?.() || null,
+        pendingRecovery: b.turnRecovery ? b.turnRecovery.listPending().length : 0,
         stats: { ...b.stats },
       })),
     };
@@ -1397,6 +1634,20 @@ export async function createTelegramFleetDaemon(config = {}, {
         }
       }
     }
+    for (const bot of bots.values()) {
+      bot.turnRecovery?.scheduleStartupRecovery({
+        isPaused: () => stopped || bot.paused || adminController.globalPaused,
+        getHistory: (cid) => bot.runtime?.getHistory?.(cid) || [],
+        onReplay: ({ entry, recoveryCue, expectedSeq }) =>
+          deliverRecoveredTurn(bot, {
+            entry,
+            recoveryCue,
+            expectedSeq,
+            deferredAttempt: 0,
+            isStartupRecovery: true,
+          }),
+      });
+    }
     const maintMs = Number(config.memoryMaintenanceIntervalMs ?? 30 * 60_000);
     if (maintMs > 0) {
       maintenanceTimer = setInterval(() => {
@@ -1433,6 +1684,7 @@ export async function createTelegramFleetDaemon(config = {}, {
     }
     scheduler.stop();
     for (const bot of bots.values()) {
+      bot.turnRecovery?.stop();
       if (bot.pollAbort) bot.pollAbort.abort();
       bot.debouncer.close();
       await bot.runtime.close().catch(() => {});
