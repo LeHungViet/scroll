@@ -16,6 +16,7 @@ import {
 import {
   createScrollChatRuntime,
   createMessageDebouncer,
+  evaluateGroupTrigger,
   createGroupGrantStore,
   matchesOwnerDelegationPhrase,
   createLongTaskRunner,
@@ -226,30 +227,22 @@ function senderDisplayName(from) {
 }
 
 function matchesTrigger({ bot, msg, text }) {
-  const isGroup = msg.chat && (msg.chat.type === 'group' || msg.chat.type === 'supergroup');
-  if (!isGroup) return { trigger: true, reason: 'dm' };
-  const slashMatch = /^\/([a-z0-9_]+)(?:@([A-Za-z0-9_]+))?\b/i.exec(String(text || '').trim());
-  if (slashMatch) {
-    const targetBot = slashMatch[2];
-    if (!targetBot || (bot.username && targetBot.toLowerCase() === bot.username.toLowerCase())) {
-      return { trigger: true, reason: 'slash_command' };
-    }
-    return { trigger: false, reason: 'other_bot_command' };
-  }
-  const policy = bot.groupPolicy || 'mention';
-  if (policy === 'off') return { trigger: false, reason: 'group_off' };
-  if (policy === 'all') return { trigger: true, reason: 'group_all' };
-  if (msg.reply_to_message?.from && bot.botUserId && String(msg.reply_to_message.from.id) === String(bot.botUserId)) {
-    return { trigger: true, reason: 'reply_to_bot' };
-  }
-  const lowered = String(text || '').toLowerCase();
-  if (bot.username && lowered.includes(`@${bot.username.toLowerCase()}`)) {
-    return { trigger: true, reason: 'at_mention' };
-  }
-  for (const pat of bot.mentionRegexes || []) {
-    if (pat.test(text || '')) return { trigger: true, reason: 'pattern_mention' };
-  }
-  return { trigger: false, reason: 'no_mention' };
+  const isGroup = Boolean(msg.chat && (msg.chat.type === 'group' || msg.chat.type === 'supergroup'));
+  return evaluateGroupTrigger({
+    policy: {
+      groupPolicy: bot.groupPolicy || 'mention',
+      mentionRegexes: bot.mentionRegexes || [],
+      softAliasRegexes: [],
+      allowGroups: true,
+    },
+    isGroup,
+    text,
+    botUsername: bot.username || '',
+    botUserId: bot.botUserId || '',
+    replyToUserId: msg.reply_to_message?.from?.id ? String(msg.reply_to_message.from.id) : '',
+    replyToUsername: msg.reply_to_message?.from?.username || '',
+    replyToIsBot: Boolean(msg.reply_to_message?.from?.is_bot),
+  });
 }
 
 async function resolvePlugins(pluginSpecs = [], baseDir = process.cwd()) {

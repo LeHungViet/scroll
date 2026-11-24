@@ -23,6 +23,8 @@ export * from './lib/workspace.js';
 export * from './lib/principal-provider.js';
 export * from './lib/remote-tool-transport.js';
 export * from './lib/agent-host.js';
+export * from './lib/chat-sdk/group-policy.js';
+export { createMessageDebouncer } from './lib/chat-sdk/debouncer.js';
 export * from './lib/grounding.js';
 export * from './lib/style.js';
 export * from './lib/turn-budget.js';
