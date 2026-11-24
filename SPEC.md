@@ -1071,6 +1071,20 @@ SCROLL 2.0 extends the batch `WORK.md` runner with an interactive, streaming, pe
 
 ---
 
+## §51 — Response Economy & Outcome-Only Runtime (v2.7)
+
+SCROLL 2.7 completes the Gricean triad at the runtime boundary so every conformant chat agent delivers concise, outcome-only replies without sacrificing deep reasoning or factual accuracy:
+
+- **Triad separation:** `lib/grounding.js` enforces **Quality** (zero hallucination); `lib/chat-sdk/plain-speak.js` enforces **Manner** (human naturalness, zero jargon); `lib/turn-budget.js` + `lib/chat-sdk/response-economy.js` enforce **Quantity & Relevance** (answer only what was asked, outcome over process narration, zero user-echo, zero unsolicited tutorials).
+- **Decoupled Brain vs Mouth (`effort_routing: fixed` default):** `IDENTITY.md` declares a machine-validated `economy:` map (`mode`, `effort_routing`, `links`, `process_narration`, `echo_guard`, `default_follow_up`, `compress_llm`, `max_chars_brief`). Thinking `effort` stays at the agent's configured level (`high`/`ultra`) by default so terse-but-hard prompts never regress; optional `effort_routing: auto` enforces a strict 6-gate fail-high allowlist + deterministic mid-turn escalation ladder (`escalateEffortForRound`).
+- **Region-C `AnswerContract` (§13 cache-invariant):** `classifyTurnBudget` classifies every turn in `<0.5ms` (`ack_confirm | action_exec | status_yn | lookup_brief | provenance_pull | complex_analysis`) and injects a compact Region-C contract without altering Region-A `prefixHash`.
+- **Two-Channel Pull-on-Demand Work Ledger:** Tool names, verified URLs, and stripped citation links are persisted per-conversation in `workLedgerByConv` instead of dumped into chat; when the user later asks for sources or details (`provenance_pull`), SCROLL surfaces the ledger on demand.
+- **Subset-Safe Compression Invariant (`verifyCompressionInvariant`):** Unlike `verifyClaimsInvariant` (1:1 multiset equality for wording swaps), `verifyCompressionInvariant` enforces `claims(after) ⊆ claims(before)` (zero fabricated or perturbed numbers/dates/codes/links/percents/times) + negation polarity preservation, enabling safe removal of unsolicited paragraphs and links.
+- **Unified Post-Gen Editorial Budget (INV-EC-1):** `ResponseEconomy` runs after grounding and before `PlainSpeak`, sharing a strict maximum of **1 ephemeral post-gen LLM pass per turn** (`effort: 'low'`, `serviceTier: 'fast'`, `ephemeral: true`). Only the clean compressed `finalText` is persisted to session history, eliminating in-context verbosity self-poisoning.
+- **Static Prompt Hygiene (`scroll audit`):** Warns on bloated `SOUL.md` (`>12KB`) and directive conflicts between `SOUL.md` mandatory-link rules and `IDENTITY.economy.links: on_request`.
+
+---
+
 ## Design note — §28–30 and the failure they answer
 
 §21 (risk), §22 (grounding) and §1.4 (enforce at the tool boundary) compensate for weaknesses of the *model*: it does not understand consequences, it hallucinates identifiers, it will not stop on its own.

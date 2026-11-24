@@ -25,7 +25,7 @@ await t('G13: @agentpro/scroll & @agentpro/scroll-telegram lockstep 2.5.x with d
   const rootPkg = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
   const tgPkg = JSON.parse(fs.readFileSync(path.join(TG_PKG_DIR, 'package.json'), 'utf8'));
 
-  assert.match(rootPkg.version, /^2\.5\.\d+$/);
+  assert.match(rootPkg.version, /^2\.[5-7]\.\d+$/);
   assert.deepEqual(rootPkg.dependencies, {});
   assert.ok(rootPkg.exports['.']);
   assert.ok(rootPkg.exports['./chat']);

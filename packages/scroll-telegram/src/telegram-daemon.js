@@ -25,6 +25,8 @@ import {
   resolveTurnRecoveryConfig,
   createPlainSpeakEngine,
   resolvePlainSpeakConfig,
+  createResponseEconomyEngine,
+  resolveEconomyConfig,
   resolveMediaStagingDir,
   persistMediaBuffer,
   ADMIN_CALLBACK_NAMESPACE,
@@ -1682,6 +1684,21 @@ export async function createTelegramFleetDaemon(config = {}, {
         })
       : null;
 
+    const econCfgRaw = {
+      ...(config.responseEconomy && typeof config.responseEconomy === 'object' ? config.responseEconomy : {}),
+      ...(bCfg.responseEconomy && typeof bCfg.responseEconomy === 'object' ? bCfg.responseEconomy : {}),
+    };
+    const hasExplicitEcon = Object.keys(econCfgRaw).length > 0;
+    const responseEconomyEngine = hasExplicitEcon && econCfgRaw.enabled !== false && econCfgRaw.mode !== 'off'
+      ? createResponseEconomyEngine({
+          ...econCfgRaw,
+          economy: resolveEconomyConfig(econCfgRaw.economy || econCfgRaw),
+          mode: econCfgRaw.runtimeMode || 'live',
+          stateDir,
+          accountId: bCfg.accountId || bCfg.id,
+        })
+      : null;
+
     const runtime = await createScrollChatRuntime({
       agentName: botObj.agentName,
       deploymentDir: botObj.deploymentDir,
@@ -1703,6 +1720,7 @@ export async function createTelegramFleetDaemon(config = {}, {
       enableMcp: Boolean(bCfg.enableMcp),
       voiceHooks: bCfg.voiceHooks || null,
       plainSpeak: plainSpeakEngine,
+      responseEconomy: responseEconomyEngine,
       groundingMode: bCfg.groundingMode || config.groundingMode || null,
       trustedRooms: bCfg.trustedRooms || config.trustedRooms || [],
       groundingRetryMax: bCfg.groundingRetryMax ?? config.groundingRetryMax ?? 1,
