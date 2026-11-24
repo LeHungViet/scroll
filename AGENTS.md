@@ -36,6 +36,8 @@ agents/<name>/
 
 13. **Deployment `USER.md` lives outside `agents/` (v1.9).** Never put a `USER.md`, a `knowledge/` folder, a `people/` folder, or private principal canary strings inside an agent folder, a skill, or a plugin bundle — `scroll audit` fails on it. One deployment has one `USER.md` naming the principal (`principal: { kind, name, self, call_others, handoff }`) and internal team members (`people: [{ id, name, call, role, approve, max_amount }]`); frontmatter stays machine-only and never enters the prompt. Customers and external contacts belong in subject memory (§31), never in `USER.md`. An agent never edits `USER.md` (`guard()`); approvals are checked against `USER.md` in code (`canApprove`), never in prose.
 
+14. **Hosted & multi-tenant deployments use immutable Packs + isolated Workspaces (v2.8 §52–§56).** Never hand-roll custom cloud-bot wrappers or ship mutable user state inside a pack. Build immutable, signed packs with `scroll pack build` / `scroll pack verify` (`lib/pack.js`), bind each deployment to an isolated tenant workspace (`lib/workspace.js`), unify verified multi-surface principals (`lib/principal-provider.js`), host behind `createScrollAgentHost` with monotonic fencing `epoch` + `eventId` dedupe + PII-redacted `exportTelemetry()` (`lib/agent-host.js`), and route any opt-in local machine tools exclusively through `RemoteToolTransport` with client-side allowlist, path sandbox, HITL, kill switch, and `DesktopMutex` (`lib/remote-tool-transport.js`).
+
 ## Before you say you're done
 Run, in order — and do not merely *claim* you ran them; the human/CI re-runs `scroll audit --verify`:
 ```bash
