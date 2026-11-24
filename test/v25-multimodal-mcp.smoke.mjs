@@ -263,7 +263,7 @@ await t('5. scroll-telegram stages inbound voice, document, video, sticker & aut
   const stateDir = path.join(tmpRoot, 'state-5');
   fs.mkdirSync(depDir, { recursive: true });
   scaffold('tg-mm', depDir, { preset: 'assistant' });
-  fs.writeFileSync(path.join(depDir, 'USER.md'), '---\nname: Eric\nrole: owner\n---\n# About\nOwner test.\n', 'utf8');
+  fs.writeFileSync(path.join(depDir, 'USER.md'), '---\nname: Alex\nrole: owner\n---\n# About\nOwner test.\n', 'utf8');
 
   const fileBodies = {
     'files/voice.ogg': Buffer.from(TINY_OGG_B64, 'base64'),
@@ -300,7 +300,7 @@ await t('5. scroll-telegram stages inbound voice, document, video, sticker & aut
   const seenCalls = [];
   const daemon = await createTelegramFleetDaemon({
     stateDir,
-    ownerIds: ['386592888'],
+    ownerIds: ['100000101'],
     bots: [{
       id: 'tg-mm',
       agentName: 'tg-mm',
@@ -333,8 +333,8 @@ await t('5. scroll-telegram stages inbound voice, document, video, sticker & aut
     // 5a. Voice + CSV document staged automatically!
     await daemon.handleIncomingMessage(bot, {
       message_id: 1,
-      chat: { id: 386592888, type: 'private' },
-      from: { id: 386592888, first_name: 'Eric' },
+      chat: { id: 100000101, type: 'private' },
+      from: { id: 100000101, first_name: 'Alex' },
       voice: { file_id: 'voice_fid_1', duration: 3, mime_type: 'audio/ogg', file_size: 40 },
     });
     await bot.debouncer.flushAll();
@@ -343,8 +343,8 @@ await t('5. scroll-telegram stages inbound voice, document, video, sticker & aut
 
     await daemon.handleIncomingMessage(bot, {
       message_id: 2,
-      chat: { id: 386592888, type: 'private' },
-      from: { id: 386592888, first_name: 'Eric' },
+      chat: { id: 100000101, type: 'private' },
+      from: { id: 100000101, first_name: 'Alex' },
       document: { file_id: 'doc_fid_1', file_name: 'report.csv', mime_type: 'text/csv', file_size: 20 },
     });
     await bot.debouncer.flushAll();
@@ -354,12 +354,12 @@ await t('5. scroll-telegram stages inbound voice, document, video, sticker & aut
     // 5b. Reply-to-photo rehydration!
     await daemon.handleIncomingMessage(bot, {
       message_id: 3,
-      chat: { id: 386592888, type: 'private' },
-      from: { id: 386592888, first_name: 'Eric' },
+      chat: { id: 100000101, type: 'private' },
+      from: { id: 100000101, first_name: 'Alex' },
       text: 'xem lại ảnh này giúp anh',
       reply_to_message: {
         message_id: 0,
-        from: { id: 386592888, first_name: 'Eric' },
+        from: { id: 100000101, first_name: 'Alex' },
         photo: [{ file_id: 'photo_fid_1', file_size: 90 }],
       },
     });

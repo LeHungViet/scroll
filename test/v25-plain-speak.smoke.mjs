@@ -198,7 +198,7 @@ await t('§13 Region-A prefixHash Byte-Stability inside createScrollChatRuntime 
   const t1 = await rt.sendTurn({
     conversationId: 'room-1',
     text: 'Thử so sánh giúp anh đi',
-    sender: { id: 'u1', name: 'Eric' },
+    sender: { id: 'u1', name: 'Alex' },
     channel: 'zalo',
   });
   assert.ok(t1.text.includes('che tên rồi chấm'), `Expected plain Vietnamese rewrite, got: ${t1.text}`);
@@ -209,7 +209,7 @@ await t('§13 Region-A prefixHash Byte-Stability inside createScrollChatRuntime 
   const t2 = await rt.sendTurn({
     conversationId: 'room-1',
     text: 'Check RLS webhook và 01/KHBS với TK 1331',
-    sender: { id: 'u1', name: 'Eric' },
+    sender: { id: 'u1', name: 'Alex' },
     channel: 'zalo',
   });
   assert.equal(t1.prefixHash, t2.prefixHash, '§13 HARD INVARIANT: PlainSpeak register switch MUST NEVER mutate Region A prefixHash!');
