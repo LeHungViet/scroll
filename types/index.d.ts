@@ -115,3 +115,18 @@ export function runChatEvals(name: string, opts?: Record<string, unknown>): Prom
 export function auditRepo(cwd?: string, opts?: Record<string, unknown>): Record<string, unknown>;
 export function runWork(opts: Record<string, unknown>): Promise<Record<string, unknown>>;
 export function runLoop(file: string, opts?: Record<string, unknown>): Promise<Record<string, unknown>>;
+// SCROLL 2.8 (§52-§56) Managed Agent Host & Immutable Packs
+export function generatePackSigningKeyPair(): { publicKeyPem: string; privateKeyPem: string };
+export function scanTextForPackLeaks(text: string, opts?: Record<string, unknown>): Array<{ file: string; rule: string; sample: string }>;
+export function buildAgentPack(opts: Record<string, unknown>): { ok: boolean; packDir: string; manifest: Record<string, unknown>; sha256: string; signed: boolean };
+export function verifyAgentPack(opts: Record<string, unknown>): { ok: boolean; packDir: string; manifest?: Record<string, unknown>; sha256?: string; verifiedSignature: boolean; findings: unknown[]; errors: string[] };
+export function createPackRegistry(opts: Record<string, unknown>): Record<string, unknown>;
+export function createLayeredKnowledge(layers?: unknown[]): Record<string, unknown>;
+export function openTenantWorkspace(opts: Record<string, unknown>): Record<string, unknown>;
+export function createPrincipalProvider(opts?: Record<string, unknown>): Record<string, unknown>;
+export function createDesktopMutex(opts?: Record<string, unknown>): Record<string, unknown>;
+export function createRemoteToolClient(opts: Record<string, unknown>): Record<string, unknown>;
+export function createCompanionToolHost(opts: Record<string, unknown>): Record<string, unknown>;
+export function verifyCompanionAudit(auditPath: string): { ok: boolean; count: number; errors: unknown[] };
+export function createScrollAgentHost(opts: Record<string, unknown>): Promise<Record<string, unknown>>;
+export function redactTelemetryText(text: string): string;

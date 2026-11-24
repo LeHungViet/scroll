@@ -1,4 +1,4 @@
-// SCROLL 2.5 -- Complete public programmatic API barrel.
+// SCROLL 2.8 -- Complete public programmatic API barrel.
 export * from './lib/scroll.js';
 export * from './lib/auth.js';
 export * from './lib/codex-app-server.js';
@@ -18,6 +18,11 @@ export * from './lib/user.js';
 export * from './lib/people.js';
 export * from './lib/knowledge.js';
 export * from './lib/promotion.js';
+export * from './lib/pack.js';
+export * from './lib/workspace.js';
+export * from './lib/principal-provider.js';
+export * from './lib/remote-tool-transport.js';
+export * from './lib/agent-host.js';
 export * from './lib/grounding.js';
 export * from './lib/style.js';
 export * from './lib/turn-budget.js';
