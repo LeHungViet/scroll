@@ -21,9 +21,11 @@ const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'scroll-v25-pack-'));
 console.log('SCROLL 2.5 -- 2-Package Monorepo Tarball Gate, Zero-Leak Scan, & CLI Subcommands (G13, G14)');
 
 // ── G13: Package metadata, zero dependencies, exports map, & clean /tmp tarball install ──
-await t('G13: @agentpro/scroll & @agentpro/scroll-telegram lockstep 2.5.x with dependencies: {} and zero relative parent imports', () => {
+await t('G13: @agentpro/scroll workspace packages lockstep 2.x with dependencies: {} and zero relative parent imports', () => {
   const rootPkg = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
   const tgPkg = JSON.parse(fs.readFileSync(path.join(TG_PKG_DIR, 'package.json'), 'utf8'));
+  const contPkg = JSON.parse(fs.readFileSync(path.join(REPO, 'packages', 'scroll-continuity', 'package.json'), 'utf8'));
+  const advPkg = JSON.parse(fs.readFileSync(path.join(REPO, 'packages', 'scroll-advisory', 'package.json'), 'utf8'));
 
   assert.match(rootPkg.version, /^2\.[5-8]\.\d+$/);
   assert.deepEqual(rootPkg.dependencies, {});
@@ -35,6 +37,17 @@ await t('G13: @agentpro/scroll & @agentpro/scroll-telegram lockstep 2.5.x with d
   assert.equal(tgPkg.version, rootPkg.version);
   assert.deepEqual(tgPkg.dependencies, {});
   assert.equal(tgPkg.peerDependencies['@agentpro/scroll'], `^${rootPkg.version}`);
+
+  assert.equal(contPkg.name, '@agentpro/scroll-continuity');
+  assert.equal(contPkg.version, rootPkg.version);
+  assert.deepEqual(contPkg.dependencies, {});
+  assert.equal(contPkg.peerDependencies['@agentpro/scroll'], `^${rootPkg.version}`);
+
+  assert.equal(advPkg.name, '@agentpro/scroll-advisory');
+  assert.equal(advPkg.version, rootPkg.version);
+  assert.deepEqual(advPkg.dependencies, {});
+  assert.equal(advPkg.peerDependencies['@agentpro/scroll'], `^${rootPkg.version}`);
+  assert.equal(advPkg.peerDependencies['@agentpro/scroll-continuity'], `^${rootPkg.version}`);
 
   // Verify zero parent relative imports (`../../` escaping package) in scroll-telegram
   for (const rel of ['src/index.js', 'src/telegram-api.js', 'src/telegram-admin-ui.js', 'src/telegram-daemon.js', 'bin/scroll-telegram.js']) {

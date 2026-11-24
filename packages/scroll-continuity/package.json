@@ -1,0 +1,30 @@
+{
+  "name": "@agentpro/scroll-continuity",
+  "version": "2.8.0",
+  "description": "Universal opt-in continuity kernel for @agentpro/scroll agents: bi-temporal provenance-locked SQLite ledger, POMR goal & pragmatic backlog parking, evidence-backed 5D peer style cards, async sleep-time compute, and time-travel replay evals.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./storage": "./src/storage-adapter.js",
+    "./ledger": "./src/ledger-store.js",
+    "./problems": "./src/problem-register.js",
+    "./impedance": "./src/client-impedance.js",
+    "./sleep": "./src/sleep-worker.js",
+    "./recall": "./src/recall-tool.js",
+    "./replay": "./src/replay-eval.js",
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "dependencies": {},
+  "peerDependencies": {
+    "@agentpro/scroll": "^2.8.0"
+  },
+  "license": "MIT"
+}
