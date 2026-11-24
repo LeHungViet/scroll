@@ -1,6 +1,6 @@
 {
   "name": "@agentpro/scroll",
-  "version": "2.8.1",
+  "version": "2.8.2",
   "description": "SCROLL 2.8 -- zero-dependency harness for agentic loops, interactive chat sessions, and placement-agnostic managed agent hosts. Build AI agents as folders, not code: filesystem-native, 4-provider parity, portable Tool Retriever, OS-sandboxed tools, Streamable HTTP + stdio MCP, OAuth/Codex auth, opt-in Continuity & Advisory packages, Response Economy (§51), and Immutable Agent Packs + Managed Host (§52-§56).",
   "main": "index.js",
   "types": "./types/index.d.ts",

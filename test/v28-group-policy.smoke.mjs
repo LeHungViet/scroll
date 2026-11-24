@@ -175,7 +175,7 @@ async function testSignedPackChannelPolicy() {
         name: 'stub',
         model: 'stub',
         ready: true,
-        supportsTools: false,
+        supportsTools: true,
         async generate() { return { text: 'ok', toolCalls: [], usage: {}, durationMs: 1, model: 'stub' }; },
       },
     });
@@ -183,6 +183,39 @@ async function testSignedPackChannelPolicy() {
     assert.equal(hp.groupPolicy, 'mention');
     assert.deepEqual(hp.mentionPatterns, ['\\bdemo\\b']);
     assert.equal(host.getStatus().channelPolicy.debounceQuietMs, 3500);
+
+    // 2b. Cross-surface unified memory capsule: Telegram turn visible on Web DM for SAME linked owner, NEVER to strangers!
+    const seenPrompts = [];
+    const capHost = await createScrollAgentHost({
+      workspace: ws,
+      packRegistry: registry,
+      principalProvider: createPrincipalProvider({
+        storePath: path.join(ws.getPaths().runtimeDir, 'principals-cap.json'),
+        ownerPrincipalId: 'owner:a',
+        initialLinks: [
+          { principalId: 'owner:a', surface: 'web', externalId: 'web_owner_a', role: 'owner' },
+          { principalId: 'owner:a', surface: 'telegram', externalId: '999001', role: 'owner' },
+        ],
+      }),
+      provider: {
+        name: 'stub',
+        model: 'stub',
+        ready: true,
+        supportsTools: true,
+        async generate(prompt, opts = {}) {
+          const allText = `${opts.system || ''}\n${(opts.messages || []).map((m) => String(m.content || '')).join('\n')}`;
+          seenPrompts.push(allText);
+          return { text: 'noted', toolCalls: [], usage: {}, durationMs: 1, model: 'stub' };
+        },
+      },
+    });
+    await capHost.handleTurn({ surface: 'telegram', conversationId: 'telegram:999001', senderId: '999001', text: 'my secret code is 4242', isGroup: false });
+    await capHost.handleTurn({ surface: 'web', conversationId: 'web:web_owner_a', senderId: 'web_owner_a', text: 'what code did I send on telegram?', isGroup: false });
+    await capHost.handleTurn({ surface: 'web', conversationId: 'web:stranger_b', senderId: 'stranger_b', text: 'what code did the owner send?', isGroup: false });
+    assert.ok(seenPrompts[1].includes('my secret code is 4242'), 'linked owner on Web must see Telegram turn in cross-surface capsule');
+    assert.ok(seenPrompts[1].includes('telegram-dm'), 'capsule must tag originating surface');
+    assert.ok(!seenPrompts[2].includes('my secret code is 4242'), 'unlinked stranger must NEVER see owner cross-surface capsule');
+    await capHost.close();
     await host.close();
 
     // 3. Tampering channelPolicy MUST invalidate Ed25519 signature!
