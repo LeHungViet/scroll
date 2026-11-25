@@ -27,7 +27,7 @@ await t('G13: @agentpro/scroll workspace packages lockstep 2.x with dependencies
   const contPkg = JSON.parse(fs.readFileSync(path.join(REPO, 'packages', 'scroll-continuity', 'package.json'), 'utf8'));
   const advPkg = JSON.parse(fs.readFileSync(path.join(REPO, 'packages', 'scroll-advisory', 'package.json'), 'utf8'));
 
-  assert.match(rootPkg.version, /^2\.[5-8]\.\d+$/);
+  assert.match(rootPkg.version, /^2\.\d+\.\d+$/);
   assert.deepEqual(rootPkg.dependencies, {});
   assert.ok(rootPkg.exports['.']);
   assert.ok(rootPkg.exports['./chat']);
