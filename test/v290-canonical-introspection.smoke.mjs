@@ -223,7 +223,8 @@ await test('5. ScrollAgentHost E2E: host.describe(), live event bus, lastTurnRou
     });
 
     assert.equal(snap.schema, 'scroll-introspection/v1');
-    assert.equal(snap.scrollVersion, '2.9.0');
+    assert.equal(snap.scrollVersion, '2.9.1');
+    assert.ok(snap.skillsReport.visible.some((s) => s.name === 'demo-skill' && /Demo helper/.test(s.description)), 'skillsRegistry report must surface demo-skill with description');
     assert.equal(snap.effectiveModel.fallback, 'gpt-6.2-astra');
     assert.equal(snap.effectiveModel.escalation, 'auto');
     assert.equal(snap.lastTurnRouting.selectedModel, 'gpt-6.2-astra');
