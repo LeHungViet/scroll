@@ -1,3 +1,0 @@
-{"ts":"2026-11-25T06:03:16.280Z","event":"staged","candidateId":"pack-nova-1.0.0-9dfc3b43","sha256":"0bd27d9f6bcd1541db1fa3ba82891e7b25ac408b53a8aac671c04084e35f1e49"}
-{"ts":"2026-11-25T06:03:16.280Z","event":"gated_pass","candidateId":"pack-nova-1.0.0-9dfc3b43","sha256":"0bd27d9f6bcd1541db1fa3ba82891e7b25ac408b53a8aac671c04084e35f1e49","reasons":[]}
-{"ts":"2026-11-25T06:03:16.280Z","event":"promoted","manifestId":"mf-2026-11-25T06-03-16-280Z-0bd27d9f","candidateId":"pack-nova-1.0.0-9dfc3b43","sha256":"0bd27d9f6bcd1541db1fa3ba82891e7b25ac408b53a8aac671c04084e35f1e49","previousCandidateId":null}
