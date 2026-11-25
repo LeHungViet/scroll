@@ -1,0 +1,32 @@
+{
+  "schema": "scroll-promotion-candidate/v1",
+  "candidateId": "pack-nova-1.0.0-9dfc3b43",
+  "status": "promoted",
+  "createdAt": "2026-11-25T06:03:16.280Z",
+  "updatedAt": "2026-11-25T06:03:16.280Z",
+  "snapshotDir": "/var/folders/bv/bmms82jj5pl73lyy09d8jw9r0000gn/T/scroll-v283-host-EVZFUC/packs/nova/1.0.0",
+  "sha256": "0bd27d9f6bcd1541db1fa3ba82891e7b25ac408b53a8aac671c04084e35f1e49",
+  "fileCount": 5,
+  "totalBytes": 1539,
+  "metadata": {
+    "packId": "nova",
+    "version": "1.0.0",
+    "stateSchemaVersion": 1
+  },
+  "gate": {
+    "ok": true,
+    "checkedAt": "2026-11-25T06:03:16.280Z",
+    "reasons": [],
+    "evalSummary": {
+      "ok": true,
+      "passed": 1,
+      "total": 1,
+      "passRate": 1,
+      "p0PassRate": null,
+      "regressions": 0
+    },
+    "mutationSummary": null
+  },
+  "shadow": null,
+  "promotedAt": "2026-11-25T06:03:16.280Z"
+}

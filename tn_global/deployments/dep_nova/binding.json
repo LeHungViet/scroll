@@ -1,0 +1,18 @@
+{
+  "schema": "scroll-workspace-binding/v1",
+  "tenantId": "tn_global",
+  "deploymentId": "dep_nova",
+  "activePack": {
+    "packId": "nova",
+    "agentName": "nova",
+    "version": "1.0.0",
+    "sha256": "9dfc3b435a7ddff52211ec495b51b85909d6463f77920e04826a74f387fee3b0",
+    "packDir": "/var/folders/bv/bmms82jj5pl73lyy09d8jw9r0000gn/T/scroll-v283-host-EVZFUC/packs/nova/1.0.0",
+    "stateSchemaVersion": 1
+  },
+  "previousPack": null,
+  "epoch": 1,
+  "stateSchemaVersion": 1,
+  "createdAt": "2026-11-25T06:03:16.280Z",
+  "updatedAt": "2026-11-25T06:03:16.280Z"
+}
