@@ -98,6 +98,9 @@ export function createSecretVault(opts: Record<string, unknown>): Record<string,
 export function createEventLogger(opts?: Record<string, unknown>): Record<string, unknown>;
 export function createAuditChain(opts?: Record<string, unknown>): Record<string, unknown>;
 export function verifyAuditChain(filePath: string): { ok: boolean; count: number; errors: unknown[] };
+export const DEFAULT_TIER_MULTIPLIERS: Readonly<Record<string, number>>;
+export function resolveModelPricing(pricing?: Record<string, unknown>, opts?: Record<string, unknown>): Record<string, unknown>;
+export function estimateUsageUsd(usage: Record<string, unknown>, pricing?: Record<string, unknown>, opts?: Record<string, unknown>): number;
 export function createBudgetGovernor(opts?: Record<string, unknown>): Record<string, unknown>;
 export function createApprovalStore(opts?: Record<string, unknown>): Record<string, unknown>;
 export function createAlertLedger(opts?: Record<string, unknown>): Record<string, unknown>;

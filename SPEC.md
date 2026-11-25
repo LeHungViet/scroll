@@ -1060,6 +1060,7 @@ SCROLL 2.0 extends the batch `WORK.md` runner with an interactive, streaming, pe
 
 - Pure Node `Intl.DateTimeFormat` 5-field cron evaluation in any IANA timezone (e.g. `Asia/Ho_Chi_Minh`), plus interval (`everyMs`) and one-shot (`at`) reminders, persisted atomically (`0600`).
 - Enforces single-fire-per-minute deduplication, exponential retry backoff on transient/429 errors, per-job `maxDailyRuns` budget caps, and a global `paused` kill-switch.
+- **0-LLM deterministic pre-check & budget isolation (v2.8.5):** `createScheduler` and `createScrollAgentHost.runScheduledTick` support a deterministic `precheck` gate (`registerPrecheck` / `precheck`) that skips idle ticks with zero LLM calls and zero `dailyRuns` consumption, enforce `budgetGovernor` pre-flight caps (including dedicated `maxBackgroundDailyUsd` / `bucketCaps` isolation, `maxMonthlyUsd`, invoice-anchored `syncExternalInvoice`, graduated `onBudgetAlert` thresholds, and multimodal + `serviceTier` pricing in `lib/chat-telemetry.js`), and default background/scheduled ticks to `serviceTier: 'standard'` so scheduled work never inherits interactive `fast`/`priority` multipliers accidentally.
 - **Owner DM authority (`canManageJob`):** a verified internal `owner`/`admin` in a direct message is authorized to inspect, toggle, edit, or delete scheduled jobs targeting any group chat.
 
 ## §50 — Async background workers & hybrid memory search (v2.0)
