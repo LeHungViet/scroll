@@ -224,7 +224,10 @@ await test('4. 4-tier Tool Catalog v2 + Cloud precedence shadowing + Parity Gate
       defaultWeights: { preset: 'nhe-nhang', traits: { assertiveness: 2, reserve: 2, wit: 2, warmth: 4 }, initiative: 1, adaptiveLevel: 2 },
       defaultCapabilities: { model: 'auto', reasoningEffort: 'medium', webSearch: true, imageGeneration: false, vision: true },
       voice: { defaultMode: 'auto', allowHumanError: true, defaultHumanError: false },
-      toolGroups: [{ id: 'alpha-tools', name: 'Alpha Domain', prefixes: ['alpha_'] }],
+      toolGroups: [
+        { id: 'alpha-tools', name: 'Alpha Domain', prefixes: ['alpha_'] },
+        { id: 'alpha-ext', name: 'Alpha Companion Ext', tier: 'external', prefixes: ['legacy_ext_'] },
+      ],
       uiPanels: ['alpha-workbench'],
     });
     const verified = verifyAgentPack({ packDir: built.packDir, publicKeyPem: keys.publicKeyPem, requireSignature: true });
@@ -297,6 +300,8 @@ await test('4. 4-tier Tool Catalog v2 + Cloud precedence shadowing + Parity Gate
         tools: [
           { name: 'send_telegram_message', group: 'tg-legacy', groupName: 'Legacy TG' },
           { name: 'ledger_read', group: 'ledger-books', groupName: 'Ledger Books' },
+          { name: 'legacy_ext_ping' },
+          { name: 'legacy_ext_ping' },
         ],
       },
       modelCapabilities: {
@@ -311,6 +316,8 @@ await test('4. 4-tier Tool Catalog v2 + Cloud precedence shadowing + Parity Gate
     assert.equal(snapOk.mcpInventory.shadowedTools.length, 1, 'Duplicate Companion send_telegram_message must be shadowed by Cloud');
     assert.equal(snapOk.mcpInventory.pack[0].groupId, 'alpha-tools');
     assert.equal(snapOk.mcpInventory.integrations.find((g) => g.groupId === 'ledger-books').status, 'disabled');
+    const extGrp = snapOk.mcpInventory.integrations.find((g) => g.groupId === 'alpha-ext');
+    assert.ok(extGrp && extGrp.tier === 'external' && extGrp.toolsCount === 1, 'Pack external toolGroups must classify & deduplicate legacy Companion tools');
     const pOk = verifyIntrospectionParity(snapOk);
     assert.equal(pOk.ok, true, JSON.stringify(pOk.failures));
     assert.ok(pOk.warnings.some((w) => w.id === 'capabilities.runner_match'), 'Must warn when imageGeneration/webSearch enabled on unsupported runner');
