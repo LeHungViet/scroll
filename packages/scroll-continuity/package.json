@@ -1,6 +1,6 @@
 {
   "name": "@agentpro/scroll-continuity",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "description": "Universal opt-in continuity kernel for @agentpro/scroll agents: bi-temporal provenance-locked SQLite ledger, POMR goal & pragmatic backlog parking, evidence-backed 5D peer style cards, async sleep-time compute, and time-travel replay evals.",
   "type": "module",
   "main": "src/index.js",
@@ -24,7 +24,7 @@
   ],
   "dependencies": {},
   "peerDependencies": {
-    "@agentpro/scroll": "^2.10.0"
+    "@agentpro/scroll": "^2.11.0"
   },
   "license": "MIT"
 }

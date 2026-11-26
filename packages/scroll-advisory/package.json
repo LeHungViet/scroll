@@ -1,6 +1,6 @@
 {
   "name": "@agentpro/scroll-advisory",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "description": "Opt-in vertical specialist layer for @agentpro/scroll + @agentpro/scroll-continuity: Tri-Partite Domain Cortex (T1 Normative · T2 Verified CBR · T3 TTL Software Atlas), Enabling 5-Step Consulting Lens, Tier A-D Graceful Boundary Guard, Apprenticeship Promotion Ladder, and 7-Metric Vertical Consulting Bench.",
   "type": "module",
   "main": "src/index.js",
@@ -22,8 +22,8 @@
   ],
   "dependencies": {},
   "peerDependencies": {
-    "@agentpro/scroll": "^2.10.0",
-    "@agentpro/scroll-continuity": "^2.10.0"
+    "@agentpro/scroll": "^2.11.0",
+    "@agentpro/scroll-continuity": "^2.11.0"
   },
   "license": "MIT"
 }

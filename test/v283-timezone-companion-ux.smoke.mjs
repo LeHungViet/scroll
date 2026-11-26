@@ -166,7 +166,7 @@ await check('4. style.js & turn-budget.js: preserve bullet newlines + classify a
   assert.equal(budgetAfterProposal.shape, 'action_exec');
   assert.equal(budgetAfterProposal.reason, 'approval_of_pending_proposal');
   const cue = renderAnswerContractCue(budgetAfterProposal, { locale: 'vi' });
-  assert.ok(cue.includes('DUYỆT') && !cue.includes('xác nhận gọn 1 câu'));
+  assert.ok(cue.includes('DUY\u1ec6T') && !cue.includes('x\u00e1c nh\u1eadn g\u1ecdn 1 c\u00e2u'));
 
   const budgetPlainAck = classifyTurnBudget({
     text: 'Ok',

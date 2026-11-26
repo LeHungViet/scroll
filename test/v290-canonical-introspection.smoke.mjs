@@ -73,28 +73,35 @@ await test('2. Channel policy describer extracts human trigger labels with prove
   assert.equal(overridden.source, 'override');
 });
 
-await test('3. Declarative tool catalog separates Bot Room defaults from integrations (Google first, 0 overlap)', () => {
+await test('3. Declarative 4-tier tool catalog separates host defaults from external integrations (0 overlap)', () => {
+  const hostGroups = [
+    { id: 'doc-studio', name: 'Document Studio', techName: 'Document Studio', tier: 'host', priority: 5, kind: 'runtime', defaultVisible: true, prefixes: ['doc_'] },
+    { id: 'desktop-gui', name: 'Desktop Control', techName: 'Desktop GUI', tier: 'host', priority: 10, kind: 'mcp', requiresCompanion: true, defaultVisible: true, prefixes: ['river_cua_'] },
+    { id: 'web-browser', name: 'Real Browser', techName: 'Browser', tier: 'host', priority: 20, kind: 'bridge', requiresCompanion: true, defaultVisible: true, prefixes: ['dragon_'] },
+  ];
   const catalog = describeToolCatalog({
+    hostGroupDefinitions: hostGroups,
+    runtimeToolDescriptors: [
+      { name: 'memory_search', group: 'scroll-core', tier: 'core' },
+      { name: 'doc_create', group: 'doc-studio', tier: 'host' },
+    ],
     companionEnabled: true,
     companionOnline: true,
     deviceId: 'mac-demo',
     companionTools: [
-      { name: 'fava_books_summary', risk: 'read_only' },
-      { name: 'river_cua_observe', risk: 'read_only', group: 'river-cua', tier: 'botroom' },
+      { name: 'ledger_summary', risk: 'read_only', group: 'ledger-books', groupName: 'Ledger Books', groupSummary: 'Read accounting books' },
+      { name: 'river_cua_observe', risk: 'read_only', group: 'desktop-gui', tier: 'host' },
       { name: 'dragon_browser', risk: 'reversible_write' },
       { name: 'calendar_create_event', risk: 'reversible_write' },
-      { name: 'mixer_escalate', risk: 'read_only' },
-      { name: 'river_ask', risk: 'reversible_write' },
       { name: 'custom_erp_sync', risk: 'reversible_write', group: 'erp-sync', groupName: 'ERP Sync', groupSummary: 'Sync orders to ERP' },
     ],
   });
 
-  const defIds = catalog.botroomDefaults.map((d) => d.groupId);
-  assert.deepEqual(defIds, ['scroll-core', 'river-cua', 'dragon-browser', 'doc-colab', 'mixer', 'river-ask']);
-  assert.equal(catalog.botroomDefaults.find((d) => d.groupId === 'river-cua').status, 'online');
-  assert.equal(catalog.botroomDefaults.find((d) => d.groupId === 'doc-colab').status, 'not_connected');
-
-  assert.equal(catalog.integrations[0].groupId, 'google-workspace', 'Google must rank first in integrations');
+  const defIds = catalog.hostDefaults.map((d) => d.groupId);
+  assert.deepEqual(defIds, ['scroll-core', 'doc-studio', 'desktop-gui', 'web-browser']);
+  assert.equal(catalog.hostDefaults.find((d) => d.groupId === 'doc-studio').status, 'online');
+  assert.equal(catalog.hostDefaults.find((d) => d.groupId === 'desktop-gui').status, 'online');
+  assert.equal(catalog.integrations[0].groupId, 'google-workspace', 'Google Workspace must rank first in external integrations');
   assert.ok(catalog.integrations.some((i) => i.groupId === 'erp-sync' && i.name === 'ERP Sync'), 'Declarative custom group must work without host code');
   assert.equal(catalog.unclassifiedTools.length, 0);
 });
@@ -216,14 +223,14 @@ await test('5. ScrollAgentHost E2E: host.describe(), live event bus, lastTurnRou
         deviceId: 'mac-demo',
         online: true,
         tools: [
-          { name: 'river_cua_observe', risk: 'read_only' },
+          { name: 'desktop_observe', risk: 'read_only', group: 'desktop-gui', groupName: 'Desktop GUI', groupSummary: 'Inspect desktop UI' },
           { name: 'calendar_create_event', risk: 'reversible_write' },
         ],
       },
     });
 
     const pkgVersion = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
-    assert.equal(snap.schema, 'scroll-introspection/v1');
+    assert.equal(snap.schema, 'scroll-introspection/v2');
     assert.equal(snap.scrollVersion, pkgVersion);
     assert.ok(snap.skillsReport.visible.some((s) => s.name === 'demo-skill' && /Demo helper/.test(s.description)), 'skillsRegistry report must surface demo-skill with description');
     assert.equal(snap.effectiveModel.fallback, 'gpt-6.2-astra');
