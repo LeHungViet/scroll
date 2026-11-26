@@ -1,0 +1,378 @@
+{
+  "version": 2,
+  "generatedAt": "2026-11-20T05:01:15.345Z",
+  "piiScrubbed": true,
+  "dnaOnly": true,
+  "stats": {
+    "filesScanned": 80,
+    "totalMessages": 32127,
+    "vietnameseMessages": 27238,
+    "avgBubbleChars": 31,
+    "shortBubblePercent": 87.8,
+    "burstRatePercent": 37.2,
+    "pronounDensityPercent": 2.5,
+    "questionRatePercent": 3.5,
+    "noFinalDotPercent": 98.6,
+    "emoticonCount": 1375,
+    "emojiCount": 209,
+    "emoticonSharePercent": 86.8
+  },
+  "voiceDna": {
+    "topAbbreviations": [
+      {
+        "token": "k",
+        "count": 2643
+      },
+      {
+        "token": "\u0111c",
+        "count": 1725
+      },
+      {
+        "token": "r",
+        "count": 1696
+      },
+      {
+        "token": "ko",
+        "count": 1446
+      },
+      {
+        "token": "nh\u00e9",
+        "count": 1384
+      },
+      {
+        "token": "\u0111\u00e2u",
+        "count": 721
+      },
+      {
+        "token": "j",
+        "count": 633
+      },
+      {
+        "token": "ch\u1ee9",
+        "count": 594
+      },
+      {
+        "token": "nh\u01b0ng",
+        "count": 577
+      },
+      {
+        "token": "lu\u00f4n",
+        "count": 570
+      },
+      {
+        "token": "nh\u1ec9",
+        "count": 566
+      },
+      {
+        "token": "vs",
+        "count": 562
+      },
+      {
+        "token": "ok",
+        "count": 545
+      },
+      {
+        "token": "qu\u00e1",
+        "count": 438
+      },
+      {
+        "token": "\u00e0",
+        "count": 383
+      },
+      {
+        "token": "nha",
+        "count": 293
+      },
+      {
+        "token": "trc",
+        "count": 289
+      },
+      {
+        "token": "ng",
+        "count": 281
+      },
+      {
+        "token": "t\u00ed",
+        "count": 226
+      },
+      {
+        "token": "\u00e1",
+        "count": 223
+      },
+      {
+        "token": "dc",
+        "count": 193
+      },
+      {
+        "token": "v\u00e3i",
+        "count": 186
+      },
+      {
+        "token": "ch\u1ed1t",
+        "count": 161
+      },
+      {
+        "token": "ntn",
+        "count": 138
+      }
+    ],
+    "topEmoticons": [
+      {
+        "token": ":)))",
+        "count": 762
+      },
+      {
+        "token": "=))",
+        "count": 169
+      },
+      {
+        "token": ":))",
+        "count": 158
+      },
+      {
+        "token": ":(",
+        "count": 79
+      },
+      {
+        "token": ":D",
+        "count": 30
+      },
+      {
+        "token": ":-))",
+        "count": 28
+      },
+      {
+        "token": ":-)))",
+        "count": 22
+      },
+      {
+        "token": "=)))",
+        "count": 22
+      },
+      {
+        "token": ":-)",
+        "count": 20
+      },
+      {
+        "token": "^^",
+        "count": 20
+      },
+      {
+        "token": ":((",
+        "count": 19
+      },
+      {
+        "token": ";)))",
+        "count": 13
+      }
+    ],
+    "topEmojis": [
+      {
+        "token": "\ud83e\udd23",
+        "count": 42
+      },
+      {
+        "token": "\u2705",
+        "count": 25
+      },
+      {
+        "token": "\ud83d\ude02",
+        "count": 21
+      },
+      {
+        "token": "\ud83d\ude05",
+        "count": 17
+      },
+      {
+        "token": "\ud83d\ude06",
+        "count": 16
+      },
+      {
+        "token": "\ud83d\ude00",
+        "count": 6
+      },
+      {
+        "token": "\u274c",
+        "count": 6
+      },
+      {
+        "token": "\ud83d\udd39",
+        "count": 4
+      },
+      {
+        "token": "\ud83c\udf80",
+        "count": 4
+      },
+      {
+        "token": "\u2640",
+        "count": 3
+      },
+      {
+        "token": "\ud83d\ude04",
+        "count": 3
+      },
+      {
+        "token": "\ud83d\udccc",
+        "count": 3
+      }
+    ],
+    "topParticles": [
+      {
+        "token": "nh\u00e9",
+        "count": 1059
+      },
+      {
+        "token": "\u0111\u00f3",
+        "count": 516
+      },
+      {
+        "token": "nh\u1ec9",
+        "count": 470
+      },
+      {
+        "token": "\u0111\u1ea5y",
+        "count": 299
+      },
+      {
+        "token": "th\u1ebf",
+        "count": 285
+      },
+      {
+        "token": "nha",
+        "count": 228
+      },
+      {
+        "token": "lu\u00f4n",
+        "count": 224
+      },
+      {
+        "token": "\u00e1",
+        "count": 169
+      },
+      {
+        "token": "\u00e0",
+        "count": 153
+      },
+      {
+        "token": "ph\u1ebft",
+        "count": 57
+      },
+      {
+        "token": "lun",
+        "count": 51
+      },
+      {
+        "token": "nh\u1ec3",
+        "count": 38
+      }
+    ],
+    "topWarmOpeners": [
+      {
+        "token": "ch\u1eafc",
+        "count": 267
+      },
+      {
+        "token": "d\u1ea1",
+        "count": 241
+      },
+      {
+        "token": "\u00e0",
+        "count": 165
+      },
+      {
+        "token": "\u01a1",
+        "count": 130
+      },
+      {
+        "token": "\u1ee7a",
+        "count": 60
+      },
+      {
+        "token": "nghe",
+        "count": 25
+      },
+      {
+        "token": "c\u00f4ng nh\u1eadn",
+        "count": 25
+      },
+      {
+        "token": "h\u1ee3p l\u00fd",
+        "count": 10
+      },
+      {
+        "token": "th\u1eadt \u00e1",
+        "count": 2
+      },
+      {
+        "token": "h\u00ec",
+        "count": 1
+      }
+    ],
+    "topLaughs": [
+      {
+        "token": "haha",
+        "count": 56
+      },
+      {
+        "token": "hahaa",
+        "count": 14
+      },
+      {
+        "token": "kkk",
+        "count": 14
+      },
+      {
+        "token": "hehe",
+        "count": 6
+      }
+    ],
+    "topConnectors": [
+      {
+        "token": "m\u00e0",
+        "count": 1588
+      },
+      {
+        "token": "xong",
+        "count": 825
+      },
+      {
+        "token": "ch\u1eafc",
+        "count": 658
+      },
+      {
+        "token": "ch\u1ee9",
+        "count": 594
+      },
+      {
+        "token": "ki\u1ec3u",
+        "count": 539
+      },
+      {
+        "token": "nh\u01b0ng m\u00e0",
+        "count": 39
+      },
+      {
+        "token": "kh\u00e9o",
+        "count": 35
+      },
+      {
+        "token": "c\u00f4ng nh\u1eadn",
+        "count": 30
+      },
+      {
+        "token": "c\u01a1 m\u00e0",
+        "count": 21
+      },
+      {
+        "token": "th\u1eadt ra",
+        "count": 8
+      }
+    ]
+  },
+  "exemplars": {
+    "lively": [],
+    "tease": [],
+    "light_vent": [],
+    "casual": []
+  }
+}

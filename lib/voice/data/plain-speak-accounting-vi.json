@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "id": "accounting-vi",
+  "locale": "vi",
+  "domain": "accounting",
+  "protectedTerms": [
+    "01/GTGT",
+    "01/KHBS",
+    "01/TNDN",
+    "02/TB-T\u0110T",
+    "05/QTT-TNCN",
+    "C1-11/NS",
+    "D02-LT",
+    "C12-TS",
+    "TK 332",
+    "TK 1331",
+    "TK 331",
+    "TK 3331",
+    "TT 99/2025/TT-BTC",
+    "TT 10/2021",
+    "Lu\u1eadt 109/2025",
+    "Lu\u1eadt 67/2025",
+    "eTax",
+    "HTKK",
+    "BHXH",
+    "GTGT",
+    "TNDN",
+    "TNCN",
+    "FCT",
+    "EBITDA",
+    "MST"
+  ],
+  "entries": [
+    {
+      "term": "kh\u1ea5u tr\u1eeb \u0111\u1ea7u v\u00e0o",
+      "plain": "tr\u1eeb thu\u1ebf \u0111\u00e3 tr\u1ea3 l\u00fac mua",
+      "tier": "C",
+      "action": "gloss",
+      "registers": [
+        "client_plain"
+      ]
+    },
+    {
+      "term": "k\u1ebft chuy\u1ec3n",
+      "plain": "d\u1ed3n s\u1ed1 cu\u1ed1i k\u1ef3 ho\u1eb7c chuy\u1ec3n l\u1ed7 sang k\u1ef3 sau",
+      "tier": "C",
+      "action": "gloss",
+      "registers": [
+        "client_plain"
+      ]
+    },
+    {
+      "term": "ph\u00e2n b\u1ed5 CCDC",
+      "plain": "chia d\u1ea7n chi ph\u00ed \u0111\u1ed3 d\u00f9ng qua nhi\u1ec1u th\u00e1ng",
+      "tier": "C",
+      "action": "gloss",
+      "registers": [
+        "client_plain"
+      ]
+    },
+    {
+      "term": "\u1ea5n \u0111\u1ecbnh thu\u1ebf",
+      "plain": "c\u01a1 quan thu\u1ebf t\u1ef1 t\u00ednh thay m\u00ecnh",
+      "tier": "C",
+      "action": "gloss",
+      "registers": [
+        "client_plain"
+      ]
+    },
+    {
+      "term": "h\u1ea1ch to\u00e1n tr\u00edch tr\u01b0\u1edbc",
+      "plain": "ghi nh\u1eadn tr\u01b0\u1edbc kho\u1ea3n s\u1eafp ph\u1ea3i chi",
+      "tier": "C",
+      "action": "gloss",
+      "registers": [
+        "client_plain"
+      ]
+    },
+    {
+      "term": "t\u1ea1m n\u1ed9p",
+      "plain": "n\u1ed9p tr\u01b0\u1edbc theo qu\u00fd, cu\u1ed1i n\u0103m t\u00ednh l\u1ea1i",
+      "tier": "C",
+      "action": "gloss",
+      "registers": [
+        "client_plain"
+      ]
+    },
+    {
+      "term": "quy\u1ebft to\u00e1n thu\u1ebf",
+      "plain": "ch\u1ed1t s\u1ed5 thu\u1ebf c\u1ea3 n\u0103m",
+      "tier": "C",
+      "action": "gloss",
+      "registers": [
+        "client_plain"
+      ]
+    },
+    {
+      "term": "chi ph\u00ed \u0111\u01b0\u1ee3c tr\u1eeb",
+      "plain": "kho\u1ea3n chi c\u01a1 quan thu\u1ebf ch\u1ea5p nh\u1eadn",
+      "tier": "C",
+      "action": "gloss",
+      "registers": [
+        "client_plain"
+      ]
+    },
+    {
+      "term": "kh\u1ea5u hao",
+      "plain": "tr\u1eeb d\u1ea7n gi\u00e1 tr\u1ecb t\u00e0i s\u1ea3n theo n\u0103m",
+      "tier": "C",
+      "action": "gloss",
+      "registers": [
+        "client_plain"
+      ]
+    },
+    {
+      "term": "truy thu",
+      "plain": "b\u1eaft n\u1ed9p b\u00f9 ph\u1ea7n thu\u1ebf b\u1ecb thi\u1ebfu",
+      "tier": "C",
+      "action": "gloss",
+      "registers": [
+        "client_plain"
+      ]
+    },
+    {
+      "term": "ho\u00e0n thu\u1ebf",
+      "plain": "nh\u1eadn l\u1ea1i ti\u1ec1n thu\u1ebf \u0111\u00e3 n\u1ed9p d\u01b0",
+      "tier": "C",
+      "action": "gloss",
+      "registers": [
+        "client_plain"
+      ]
+    },
+    {
+      "term": "c\u1ea5n tr\u1eeb c\u00f4ng n\u1ee3",
+      "plain": "b\u00f9 tr\u1eeb kho\u1ea3n ph\u1ea3i thu v\u1edbi kho\u1ea3n ph\u1ea3i tr\u1ea3",
+      "tier": "C",
+      "action": "gloss",
+      "registers": [
+        "client_plain"
+      ]
+    }
+  ]
+}

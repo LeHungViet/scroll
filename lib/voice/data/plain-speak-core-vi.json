@@ -1,0 +1,310 @@
+{
+  "schemaVersion": 1,
+  "id": "core-vi",
+  "locale": "vi",
+  "domain": "core",
+  "protectedTerms": [
+    "ChatGPT",
+    "Claude",
+    "Gemini",
+    "Codex",
+    "Telegram",
+    "Google Calendar",
+    "PRD",
+    "BA",
+    "OKR",
+    "KPI",
+    "ROI",
+    "CEO",
+    "CFO"
+  ],
+  "registerSignals": {
+    "expertPatterns": [
+      "\\b(?:api|sdk|sql|json|jsonl|mutex|regex|docker|k8s|webhook|oauth|hmac|rls|ssrf|wal|ci\\/cd|git|commit|rebase|stdout|stderr|launchctl|rsync|npm|pytest|codex|mcp|ast|prefixHash|threadId)\\b",
+      "\\b(?:tk\\s*\\d{3,4}|01\\/gtgt|01\\/khbs|c1-11\\/ns|\\[\\d{1,3}\\]|tt\\s*\\d+\\/\\d{4}|n\u0111\\s*\\d+\\/\\d{4})\\b"
+    ],
+    "clientPlainPatterns": [
+      "\\b(?:h\u1ed9\\s+kinh\\s+doanh|c\u00f4ng\\s+ty\\s+em|b\u00ean\\s+em|xu\u1ea5t\\s+h\u00f3a\\s+\u0111\u01a1n|n\u1ed9p\\s+thu\u1ebf|b\u1ea3o\\s+hi\u1ec3m|k\u00ea\\s+khai|quy\u1ebft\\s+to\u00e1n|ti\u1ec1n\\s+ph\u1ea1t)\\b"
+    ],
+    "confusionFeedbackPatterns": [
+      "(?<![\\p{L}\\p{N}])(?:l\u00e0\\s+(?:c\u00e1i\\s+)?g\u00ec|l\u00e0\\s+sao|ngh\u0129a\\s+l\u00e0\\s+g\u00ec|n\u00f3i\\s+(?:d\u1ec5\\s+hi\u1ec3u|ti\u1ebfng\\s+ng\u01b0\u1eddi|g\u1ea7n\\s+g\u0169i)|n\u1eb7ng\\s+m\u00f9i\\s+ai|kh\u00f3\\s+hi\u1ec3u\\s+qu\u00e1|ch\u1ea5m\\s+m\u00f9\\?)(?![\\p{L}\\p{N}])"
+    ]
+  },
+  "entries": [
+    {
+      "term": "ch\u1ea5m m\u00f9",
+      "plain": "che t\u00ean r\u1ed3i ch\u1ea5m",
+      "tier": "A",
+      "action": "hint",
+      "example": "Anh \u0111\u1ecdc hai b\u00e0i m\u00e0 ch\u01b0a bi\u1ebft b\u00e0i n\u00e0o c\u1ee7a ai, r\u1ed3i ch\u1ecdn b\u00e0i vi\u1ebft t\u1ed1t h\u01a1n"
+    },
+    {
+      "term": "b\u1eaft sai nh\u1ecbp",
+      "plain": "hi\u1ec3u nh\u1ea7m \u00fd",
+      "tier": "A",
+      "action": "hint",
+      "example": "T\u01b0\u1edfng anh n\u00f3i th\u1eadt n\u00ean em \u0111\u00e1p nghi\u00eam t\u00fac qu\u00e1"
+    },
+    {
+      "term": "ch\u1ec7ch nh\u1ecbp",
+      "plain": "h\u01a1i l\u1ec7ch \u00fd",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "tr\u1eadt nh\u1ecbp",
+      "plain": "h\u01a1i l\u1ec7ch \u00fd",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "l\u1ec7ch nh\u1ecbp",
+      "plain": "ch\u01b0a kh\u1edbp \u00fd",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "gi\u1eef nh\u1ecbp",
+      "plain": "gi\u1eef m\u1ea1ch",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "\u0111\u00fang nh\u1ecbp",
+      "plain": "\u0111\u00fang l\u00fac",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "h\u01a1i ch\u1eadp ch\u1eddn m\u1ed9t nh\u1ecbp",
+      "plain": "v\u1eeba h\u01a1i tr\u1ee5c tr\u1eb7c ch\u00fat",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "xin l\u1ed7i v\u00ec s\u1ef1 b\u1ea5t ti\u1ec7n",
+      "plain": "\u0111\u1ec3 em x\u1eed l\u00fd ngay cho g\u1ecdn",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "nh\u1eb1m m\u1ee5c \u0111\u00edch",
+      "plain": "\u0111\u1ec3",
+      "tier": "A",
+      "action": "swap"
+    },
+    {
+      "term": "\u0111i\u1ec1u \u0111\u00e1ng ch\u00fa \u00fd l\u00e0",
+      "plain": "",
+      "tier": "A",
+      "action": "swap"
+    },
+    {
+      "term": "\u0111i\u1ec1u quan tr\u1ecdng c\u1ea7n l\u01b0u \u00fd l\u00e0",
+      "plain": "",
+      "tier": "A",
+      "action": "swap"
+    },
+    {
+      "term": "hy v\u1ecdng \u0111i\u1ec1u n\u00e0y h\u1eefu \u00edch",
+      "plain": "",
+      "tier": "A",
+      "action": "swap"
+    },
+    {
+      "term": "t\u1ed1i \u01b0u h\u00f3a m\u1ed9t c\u00e1ch hi\u1ec7u qu\u1ea3",
+      "plain": "l\u00e0m cho g\u1ecdn v\u00e0 m\u01b0\u1ee3t h\u01a1n",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "m\u1ed9t c\u00e1ch hi\u1ec7u qu\u1ea3",
+      "plain": "g\u1ecdn g\u00e0ng",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "c\u00f3 c\u01a1 s\u1edf",
+      "plain": "c\u00f3 l\u00fd do r\u00f5 r\u00e0ng",
+      "tier": "A",
+      "action": "hint",
+      "excludePatterns": [
+        "c\u00f3\\s+c\u01a1\\s+s\u1edf\\s+(?:kinh\\s+doanh|s\u1ea3n\\s+xu\u1ea5t|h\u1ea1\\s+t\u1ea7ng|v\u1eadt\\s+ch\u1ea5t|d\u1eef\\s+li\u1ec7u|ph\u00e1p\\s+l\u00fd|y\\s+t\u1ebf|l\u01b0u\\s+tr\u00fa|ch\u1ebf\\s+bi\u1ebfn)"
+      ]
+    },
+    {
+      "term": "\u0111\u00f3ng vai tr\u00f2 quan tr\u1ecdng trong vi\u1ec7c",
+      "plain": "r\u1ea5t c\u1ea7n \u0111\u1ec3",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "c\u00e1i nh\u00ecn t\u1ed5ng quan",
+      "plain": "t\u00f3m t\u1eaft nhanh",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "\u0111i s\u00e2u v\u00e0o",
+      "plain": "n\u00f3i k\u1ef9 h\u01a1n v\u1ec1",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "tr\u1ea3i nghi\u1ec7m li\u1ec1n m\u1ea1ch",
+      "plain": "d\u00f9ng tr\u01a1n tru",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "\u0111i\u1ec3m ch\u1ea1m",
+      "plain": "ch\u1ed7 kh\u00e1ch g\u1eb7p m\u00ecnh",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "\u0111i\u1ec3m m\u00f9",
+      "plain": "ch\u1ed7 m\u00ecnh kh\u00f4ng th\u1ea5y",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "\u0111\u01b0\u1eddng c\u01a1 s\u1edf",
+      "plain": "m\u1ed1c \u0111\u1ec3 so",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "ki\u1ec3m tra ch\u00e9o",
+      "plain": "d\u00f2 l\u1ea1i cho ch\u1eafc",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "gi\u00e1 tr\u1ecb th\u1ef1c",
+      "plain": "d\u00f9ng \u0111\u01b0\u1ee3c th\u1eadt",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "t\u1ed1i \u01b0u h\u00f3a",
+      "plain": "ch\u1ec9nh cho m\u01b0\u1ee3t",
+      "tier": "A",
+      "action": "hint"
+    },
+    {
+      "term": "\u0111\u1ed9 tr\u1ec5",
+      "plain": "ch\u1eadm m\u1ea5y gi\u00e2y",
+      "tier": "B",
+      "action": "hint"
+    },
+    {
+      "term": "ng\u1eef c\u1ea3nh",
+      "plain": "\u0111\u1ea7u \u0111u\u00f4i c\u00e2u chuy\u1ec7n",
+      "tier": "B",
+      "action": "hint"
+    },
+    {
+      "term": "pipeline",
+      "plain": "c\u00e1c b\u01b0\u1edbc x\u1eed l\u00fd",
+      "tier": "B",
+      "action": "hint"
+    },
+    {
+      "term": "h\u1ed9i t\u1ee5",
+      "plain": "ch\u1ed1t v\u1ec1 m\u1ed9t h\u01b0\u1edbng",
+      "tier": "B",
+      "action": "hint"
+    },
+    {
+      "term": "b\u1ea5t \u0111\u1ed3ng b\u1ed9",
+      "plain": "ch\u1ea1y ng\u1ea7m, xong b\u00e1o sau",
+      "tier": "B",
+      "action": "hint"
+    },
+    {
+      "term": "x\u00e1c th\u1ef1c \u0111\u1ea7u cu\u1ed1i",
+      "plain": "th\u1eed t\u1eeb \u0111\u1ea7u t\u1edbi cu\u1ed1i nh\u01b0 ng\u01b0\u1eddi d\u00f9ng th\u1eadt",
+      "tier": "B",
+      "action": "hint"
+    },
+    {
+      "term": "h\u1ed3i quy",
+      "plain": "s\u1eeda ch\u1ed7 n\u00e0y h\u1ecfng ch\u1ed7 kh\u00e1c",
+      "tier": "B",
+      "action": "hint",
+      "excludePatterns": [
+        "(?:h\u1ed3i\\s+quy\\s+(?:tuy\u1ebfn\\s+t\u00ednh|logistic|th\u1ed1ng\\s+k\u00ea)|ph\u00e2n\\s+t\u00edch\\s+h\u1ed3i\\s+quy)"
+      ]
+    },
+    {
+      "term": "tri\u1ec3n khai",
+      "plain": "\u0111\u01b0a l\u00ean ch\u1ea1y th\u1eadt",
+      "tier": "B",
+      "action": "hint",
+      "excludePatterns": [
+        "tri\u1ec3n\\s+khai\\s+(?:d\u1ef1\\s+\u00e1n|chi\u1ebfn\\s+d\u1ecbch|h\u1ee3p\\s+\u0111\u1ed3ng|m\u1eb7t\\s+b\u1eb1ng)"
+      ]
+    },
+    {
+      "term": "rollback",
+      "plain": "quay v\u1ec1 b\u1ea3n c\u0169",
+      "tier": "B",
+      "action": "hint"
+    },
+    {
+      "term": "fallback",
+      "plain": "ph\u01b0\u01a1ng \u00e1n d\u1ef1 ph\u00f2ng",
+      "tier": "B",
+      "action": "hint"
+    },
+    {
+      "term": "timeout",
+      "plain": "ch\u1edd l\u00e2u qu\u00e1 n\u00ean ng\u1eaft",
+      "tier": "B",
+      "action": "hint"
+    },
+    {
+      "term": "n\u00fat th\u1eaft c\u1ed5 chai",
+      "plain": "ch\u1ed7 ngh\u1ebdn",
+      "tier": "B",
+      "action": "hint"
+    },
+    {
+      "term": "edge case",
+      "plain": "ca hi\u1ebfm g\u1eb7p",
+      "tier": "B",
+      "action": "hint"
+    },
+    {
+      "term": "benchmark",
+      "plain": "b\u00e0i thi so th\u1eed",
+      "tier": "B",
+      "action": "hint"
+    },
+    {
+      "term": "hi\u1ec7u n\u0103ng",
+      "plain": "t\u1ed1c \u0111\u1ed9 ch\u1ea1y",
+      "tier": "B",
+      "action": "hint"
+    },
+    {
+      "term": "\u0111\u1ed1i chi\u1ebfu d\u1eef li\u1ec7u g\u1ed1c",
+      "plain": "so\u00e1t l\u1ea1i b\u1ea3n g\u1ed1c",
+      "tier": "B",
+      "action": "hint"
+    },
+    {
+      "term": "grounding",
+      "plain": "ki\u1ec3m l\u1ea1i cho ch\u1eafc ngu\u1ed3n",
+      "tier": "B",
+      "action": "hint"
+    },
+    {
+      "term": "kh\u1ea3 n\u0103ng m\u1edf r\u1ed9ng",
+      "plain": "d\u1ec5 nh\u00e2n r\u1ed9ng sau n\u00e0y",
+      "tier": "B",
+      "action": "hint"
+    }
+  ]
+}
