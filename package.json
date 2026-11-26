@@ -1,7 +1,7 @@
 {
   "name": "@agentpro/scroll",
-  "version": "2.13.1",
-  "description": "SCROLL 2.13 -- zero-dependency harness for agentic loops, interactive chat sessions, placement-agnostic managed agent hosts, unified multi-tenant channels, Voice Platform v4, universal Agent Ticket Protocol (scroll-ticket/v1), and 4-tier canonical tool catalog.",
+  "version": "2.14.0",
+  "description": "SCROLL 2.14 -- zero-dependency harness for agentic loops, interactive chat sessions, placement-agnostic managed agent hosts, unified multi-tenant channels (Telegram + W24 WS & Push Webhooks), Voice Platform v4, universal Agent Ticket Protocol (scroll-ticket/v1), and 4-tier canonical tool catalog.",
   "main": "index.js",
   "types": "./types/index.d.ts",
   "exports": {

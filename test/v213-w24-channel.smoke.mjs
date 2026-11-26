@@ -1,9 +1,10 @@
-// SCROLL 2.13.1 -- W24 / Buzz Relay Channel Adapter Smoke Tests.
+// SCROLL 2.14.0 -- W24 / Buzz Relay Channel Adapter & Push Webhook Smoke Tests.
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import {
   W24_KINDS,
   W24_DEFAULT_MAX_HOPS,
+  W24_WEBHOOK_PROTOCOL,
   httpRelayOf,
   wsRelayOf,
   parseAuthTag,
@@ -15,6 +16,8 @@ import {
   normalizeW24Event,
   evaluateW24Access,
   formatW24PeerUntrustedEnvelope,
+  signW24Webhook,
+  verifyW24Webhook,
   createChannelEngine,
 } from '../lib/channels/index.js';
 
@@ -209,6 +212,93 @@ await test('4. evaluateW24Access 0-token privacy gate & Agent-to-Agent hop-limit
   const env = formatW24PeerUntrustedEnvelope({ senderName: 'QA Agent', senderId: PEER_AGENT_PUB, hopCount: 1, channelId: CHANNEL_ID, text: 'Run test' });
   assert.ok(env.includes('UNTRUSTED_PEER_DATA'));
   assert.ok(env.includes('Run test'));
+});
+
+await test('5. Push Webhook HMAC signing/verification, replay protection, reactions & thread follow-up', async () => {
+  assert.equal(W24_WEBHOOK_PROTOCOL, 'w24-webhook/v1');
+  const secret = 'whsec_' + 'a'.repeat(48);
+  const rawBody = JSON.stringify({ w24AgentId: 'ag-1', event: { id: '7'.repeat(64), kind: 9 } });
+  const nowSec = 1700000500;
+
+  const signed = signW24Webhook({ secret, timestampSec: nowSec, rawBody });
+  assert.ok(signed.signature.startsWith('sha256='));
+  assert.equal(signed.timestamp, String(nowSec));
+
+  // Valid verification
+  assert.equal(
+    verifyW24Webhook({ secret, timestampSec: signed.timestamp, rawBody, signatureHeader: signed.signature, nowSec: nowSec + 10 }).ok,
+    true,
+  );
+  // Tampered payload MUST fail
+  assert.equal(
+    verifyW24Webhook({ secret, timestampSec: signed.timestamp, rawBody: rawBody + ' ', signatureHeader: signed.signature, nowSec: nowSec + 10 }).reason,
+    'signature_mismatch',
+  );
+  // Wrong secret MUST fail
+  assert.equal(
+    verifyW24Webhook({ secret: 'whsec_wrong', timestampSec: signed.timestamp, rawBody, signatureHeader: signed.signature, nowSec: nowSec + 10 }).reason,
+    'signature_mismatch',
+  );
+  // Stale replay outside 300s window MUST fail
+  assert.equal(
+    verifyW24Webhook({ secret, timestampSec: signed.timestamp, rawBody, signatureHeader: signed.signature, nowSec: nowSec + 301 }).reason,
+    'timestamp_skew',
+  );
+
+  // Thread follow-up: user follows up in a thread where bot already participated
+  const rootId = '8'.repeat(64);
+  const followUpEv = {
+    id: '9'.repeat(64),
+    pubkey: PEER_PUB,
+    kind: 9,
+    created_at: nowSec,
+    content: 'Yes please update row 2',
+    tags: [['h', CHANNEL_ID], ['e', rootId, '', 'root']],
+  };
+  const normThread = normalizeW24Event(followUpEv, {
+    botPubkey: BOT_PUB,
+    botName: 'Jen',
+    channelMeta: { id: CHANNEL_ID, name: 'ops', isDm: false },
+    botThreadIds: new Set([rootId]),
+  });
+  assert.equal(normThread.isReplyToBot, true, 'follow-up in active bot thread should set isReplyToBot');
+
+  // If follow-up explicitly mentions ANOTHER person/agent (not bot), do NOT steal the turn
+  const otherMentionEv = {
+    ...followUpEv,
+    id: '6'.repeat(64),
+    tags: [['h', CHANNEL_ID], ['e', rootId, '', 'root'], ['p', PEER_AGENT_PUB]],
+  };
+  const normOther = normalizeW24Event(otherMentionEv, {
+    botPubkey: BOT_PUB,
+    botName: 'Jen',
+    channelMeta: { id: CHANNEL_ID, name: 'ops', isDm: false },
+    botThreadIds: new Set([rootId]),
+  });
+  assert.equal(normOther.isReplyToBot, false, 'mentioning another user in thread must not falsely trigger bot');
+
+  // Reaction kind: 7
+  const sentEvents = [];
+  const client = createW24Client({
+    relayUrl: 'wss://relay.w24.ai',
+    secretBytes: Buffer.alloc(32, 0xaa),
+    pubkey: BOT_PUB,
+    authTag: AUTH_TAG,
+    finalizeEvent: fakeFinalizeEvent,
+    fetchImpl: async (_url, init) => {
+      const ev = JSON.parse(Buffer.from(init.body).toString('utf8'));
+      sentEvents.push(ev);
+      return { ok: true, status: 200, text: async () => JSON.stringify({ event_id: ev.id }) };
+    },
+  });
+  const reactRes = await client.sendReaction({
+    channelId: CHANNEL_ID,
+    targetEventId: followUpEv.id,
+    targetPubkey: PEER_PUB,
+    emoji: '+',
+  });
+  assert.equal(reactRes.event.kind, W24_KINDS.REACTION);
+  assert.ok(sentEvents[0].tags.some((t) => t[0] === 'e' && t[1] === followUpEv.id));
 });
 
 console.log(`\nW24 Channel Adapter tests: ${passed} passed, ${failed} failed`);
