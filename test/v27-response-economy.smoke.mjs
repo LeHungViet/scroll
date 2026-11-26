@@ -312,6 +312,33 @@ async function main() {
   const followLinks = followUpBudget.answerContract?.links ?? followUpBudget.links;
   ok(followLinks === 'inline', `short follow-up after link request must inherit links=inline (got: ${followLinks})`);
 
+  // Regression (SCROLL 2.12.2):
+  // 1) Explicit `IDENTITY.md economy.links: inline` MUST be honored even when `mode: outcome_only` across status_yn, lookup_brief, action_exec & complex_analysis!
+  const inlineEcon = { mode: 'outcome_only', links: 'inline', echo_guard: 'strict', process_narration: 'suppress' };
+  const inlineLookup = classifyTurnBudget({ text: 'Cách tạo phiếu nhập kho trên app như nào', economy: inlineEcon });
+  const inlineYn = classifyTurnBudget({ text: 'App có xuất Excel được không', economy: inlineEcon });
+  const inlineComplex = classifyTurnBudget({ text: 'Hướng dẫn chi tiết từng bước tạo phiếu nhập kho và phân quyền duyệt đơn', economy: inlineEcon });
+  ok(inlineLookup.links === 'inline', `economy.links=inline honored on lookup_brief (got: ${inlineLookup.links})`);
+  ok(inlineYn.links === 'inline', `economy.links=inline honored on status_yn (got: ${inlineYn.links})`);
+  ok(inlineComplex.links === 'inline', `economy.links=inline honored on complex_analysis (got: ${inlineComplex.links})`);
+  const inlineAudit = auditResponseEconomy({
+    userText: 'Cách tạo phiếu nhập kho trên app như nào',
+    replyText: 'Anh vào mục [Quản lý kho](https://app.example.com/stock) rồi bấm Tạo phiếu nhập nhé.',
+    contract: inlineLookup,
+  });
+  ok(!inlineAudit.violations.some((v) => v.code === 'unsolicited_links'), 'economy.links=inline never flags prose markdown link as unsolicited');
+
+  // 2) Under `links: on_request`, prose markdown links `[Label](url)` strip the URL while PRESERVING the anchor label text,
+  //    whereas standalone citation tags `[Nguồn: ...](url)` are still dropped cleanly!
+  const proseTrim = applyDeterministicEconomyTrim({
+    replyText: 'Anh vào mục [Quản lý kho](https://app.example.com/stock) để xem nhé. [Nguồn: Tài liệu nội bộ](https://example.org/ref)',
+    contract: { enabled: true, links: 'on_request', suppressProcessNarration: true, allowedFollowUps: 0 },
+  });
+  ok(proseTrim.changed === true, 'prose markdown link stripped URL under on_request');
+  ok(proseTrim.text.includes('Anh vào mục Quản lý kho để xem nhé.'), `prose label MUST be preserved (got: ${proseTrim.text})`);
+  ok(!proseTrim.text.includes('https://app.example.com/stock') && !proseTrim.text.includes('Nguồn:'), 'URL and standalone citation dropped');
+  ok(proseTrim.droppedLinks.includes('https://app.example.com/stock'), 'stripped prose URL kept in Work Ledger');
+
   console.log(`PASS v27-response-economy.smoke (${passed} checks)`);
 }
 

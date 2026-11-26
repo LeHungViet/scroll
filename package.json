@@ -1,6 +1,6 @@
 {
   "name": "@agentpro/scroll",
-  "version": "2.12.1",
+  "version": "2.12.2",
   "description": "SCROLL 2.12 -- zero-dependency harness for agentic loops, interactive chat sessions, placement-agnostic managed agent hosts, unified multi-tenant channels, Voice Platform v4 (multilingual genders/roles/EQ/Human Error v2), and 4-tier canonical tool catalog.",
   "main": "index.js",
   "types": "./types/index.d.ts",
