@@ -26,6 +26,7 @@ export * from './lib/agent-host.js';
 export * from './lib/introspection.js';
 export * from './lib/voice-engine.js';
 export * from './lib/channels/index.js';
+export * from './lib/tickets.js';
 export * from './lib/grounding.js';
 export * from './lib/style.js';
 export * from './lib/turn-budget.js';
