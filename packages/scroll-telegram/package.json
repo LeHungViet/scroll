@@ -24,7 +24,7 @@
   ],
   "dependencies": {},
   "peerDependencies": {
-    "@agentpro/scroll": "^2.11.0"
+    "@agentpro/scroll": "^2.13.1"
   },
   "license": "MIT"
 }
