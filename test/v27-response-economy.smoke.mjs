@@ -287,6 +287,31 @@ async function main() {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 
+  // Regression: NEVER strip actionable deliverable URLs (Google Meet, iShow Doc, Notion) or colon-introduced links,
+  // and inherit link intent from previous user turn on short follow-ups ("cho e quyền đó" after "có link họp chưa")!
+  const meetReply = 'Anh SJ vừa gửi link trong nhóm rồi. Anh vào họp ở đây nhé: https://meet.google.com/rmv-sefu-hgm';
+  const meetTrim = applyDeterministicEconomyTrim({
+    replyText: meetReply,
+    contract: { enabled: true, links: 'on_request', suppressProcessNarration: true, allowedFollowUps: 0 },
+  });
+  ok(meetTrim.text.includes('https://meet.google.com/rmv-sefu-hgm'), 'actionable Google Meet link MUST NOT be stripped');
+  const docReply = 'Em gửi anh tài liệu đề xuất tại đây: https://doc.ishow.pro/s/abc12345';
+  const docTrim = applyDeterministicEconomyTrim({
+    replyText: docReply,
+    contract: { enabled: true, links: 'none', suppressProcessNarration: true, allowedFollowUps: 0 },
+  });
+  ok(docTrim.text.includes('https://doc.ishow.pro/s/abc12345'), 'actionable iShow Doc link MUST NOT be stripped');
+  const followUpBudget = classifyTurnBudget({
+    text: 'cho e quyền đó',
+    history: [
+      { role: 'user', content: 'hỏi anh SJ trong group có link họp chưa để anh họp' },
+      { role: 'assistant', content: 'Em chưa gửi được vào nhóm vì cần xác nhận quyền gửi tin nhắn, anh nhé.' },
+    ],
+    economy: { mode: 'outcome_only', links: 'on_request' },
+  });
+  const followLinks = followUpBudget.answerContract?.links ?? followUpBudget.links;
+  ok(followLinks === 'inline', `short follow-up after link request must inherit links=inline (got: ${followLinks})`);
+
   console.log(`PASS v27-response-economy.smoke (${passed} checks)`);
 }
 
