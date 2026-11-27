@@ -133,3 +133,21 @@ export function createCompanionToolHost(opts: Record<string, unknown>): Record<s
 export function verifyCompanionAudit(auditPath: string): { ok: boolean; count: number; errors: unknown[] };
 export function createScrollAgentHost(opts: Record<string, unknown>): Promise<Record<string, unknown>>;
 export function redactTelemetryText(text: string): string;
+export const HIGH_RISK_REMOTE_TIERS: ReadonlySet<string>;
+export function normalizeCompanionBinding(raw?: Record<string, unknown> | null): {
+  enabled: boolean;
+  deviceId: string | null;
+  deviceIds: string[];
+  updatedAt: string | null;
+};
+export function isRemoteToolAllowedInContext(
+  spec: Record<string, unknown> | null | undefined,
+  ctx?: { isGroup?: boolean; isOwner?: boolean },
+): boolean;
+export function buildCompanionCapabilitiesPrompt(opts?: {
+  devices?: Array<Record<string, unknown>>;
+  tools?: Array<Record<string, unknown>>;
+  turnCtx?: { isGroup?: boolean; isOwner?: boolean };
+  internalTools?: string[];
+}): string;
+export function createMultiRemoteToolClient(opts?: Record<string, unknown>): Record<string, unknown>;
