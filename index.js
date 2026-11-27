@@ -9,6 +9,7 @@ export * from './lib/tools.js';
 export * from './lib/tool-retriever.js';
 export * from './lib/sandbox.js';
 export * from './lib/vault.js';
+export * from './lib/secret-provider.js';
 export * from './lib/chat-telemetry.js';
 export * from './lib/scheduler.js';
 export * from './lib/chat-session.js';
