@@ -5,6 +5,8 @@ import type {
   DurableJobStore,
   JobWakeBus,
   VaultSecretProvider,
+  AsyncRemoteJobLedger,
+  FairShareResourceQueue,
 } from './index.d.ts';
 
 export const ADMIN_CALLBACK_NAMESPACE: string;
@@ -174,8 +176,18 @@ export function createJobWakeBus(opts: Record<string, unknown>): JobWakeBus;
 export function evaluateEffectiveAuthority(opts: Record<string, unknown>): { allowed: boolean; code: string; isGroup?: boolean; effectiveTools?: string[]; forbidSecrets?: boolean; forbidCaptchaHandoff?: boolean; parkWaitingFor?: string; reason?: string };
 export function evaluateSteeringPermission(opts: Record<string, unknown>): { allowed: boolean; effectiveRole?: string; requiresNewApproval?: boolean; unauthorizedCapabilities?: string[]; code: string; reason?: string };
 export function projectJobForAudience(job: Record<string, unknown>, opts?: Record<string, unknown>): Record<string, unknown> | null;
-export function createAsyncRemoteJobLedger(opts?: Record<string, unknown>): Record<string, unknown>;
-export function createFairShareResourceQueue(opts?: Record<string, unknown>): Record<string, unknown>;
+export function createAsyncRemoteJobLedger(opts?: {
+  filePath?: string | null;
+  retentionMs?: number;
+  now?: () => number;
+}): AsyncRemoteJobLedger;
+export function createFairShareResourceQueue(opts?: {
+  maxPerGroupInFlight?: number;
+  maxPerGroupQueued?: number;
+  quantumMs?: number;
+  agingMs?: number;
+  now?: () => number;
+}): FairShareResourceQueue;
 export function resolveAutonomyConfig(raw?: Record<string, unknown> | null): Record<string, unknown>;
 export function classifyToolErrorDisposition(errOrResult: unknown): { disposition: 'abort_job' | 'park_waiting' | 'retry_backoff' | 'feed_llm_repair'; errorClass: string; retryable: boolean; parkWaitingFor: string | null; reason: string };
 export function buildContinuationWorkLedger(opts?: Record<string, unknown>): string[];

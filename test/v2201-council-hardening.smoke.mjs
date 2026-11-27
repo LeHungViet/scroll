@@ -532,3 +532,419 @@ test('v2.20.1 H8 & P0-9/H6: live WakeBus has 0 hot-loop spin on overdue ask; abo
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('v2.20.1 Round-2 N1/R3/N2/R1/R2/B2: owner/statutory pause lock, zero 25ms spin on companion & expired reconciling, unresolved-effect terminal gate', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scroll-v2201-r2-jobs-'));
+  try {
+    let now = 1_820_000_000_000;
+    const store = createDurableJobStore({ filePath: path.join(dir, 'jobs.json'), clock: () => now });
+    const liveOk = { botInRoom: true, ownerInRoom: true, groupPolicy: 'owner_or_approve', allowedTools: ['browser_open'] };
+
+    // N1 / R3: Owner pause while requester ask (with defaultOption) is open
+    const j1 = store.createJob({
+      goal: 'Prepare quarterly report',
+      principals: {
+        requester: { principalId: 'u_req' },
+        ownerIds: ['u_own'],
+        approver: { principalId: 'u_app' },
+      },
+      audienceRoom: { channel: 'telegram', chatId: '-10077', isGroup: true },
+      authority: { ticketId: 't_r2_1', policySnapshot: { groupPolicy: 'owner_or_approve', isOwnerSender: false } },
+    }).job;
+    const c1 = store.claimJob({ jobId: j1.jobId, liveAuth: liveOk });
+    assert.equal(c1.ok, true);
+
+    // Owner ask with defaultOption and empty-options defaultOption must both be rejected
+    assert.equal(store.openAsk({
+      jobId: j1.jobId, revision: c1.revision, jobEpoch: c1.jobEpoch, leaseToken: c1.leaseToken,
+      targetRole: 'owner', kind: 'choice', question: 'Approve?', options: [{ id: 'a', label: 'A' }],
+      defaultOption: 'a', defaultAfterSec: 60,
+    }).code, 'ERR_OWNER_ASK_NO_DEFAULT');
+    assert.equal(store.openAsk({
+      jobId: j1.jobId, revision: c1.revision, jobEpoch: c1.jobEpoch, leaseToken: c1.leaseToken,
+      targetRole: 'requester', kind: 'choice', question: 'Format?', options: [],
+      defaultOption: 'pdf', defaultAfterSec: 60,
+    }).code, 'INVALID_DEFAULT_OPTION');
+
+    const askRes = store.openAsk({
+      jobId: j1.jobId, revision: c1.revision, jobEpoch: c1.jobEpoch, leaseToken: c1.leaseToken,
+      targetRole: 'requester', kind: 'choice', question: 'Format?',
+      options: [{ id: 'pdf', label: 'PDF' }, { id: 'csv', label: 'CSV' }],
+      defaultOption: 'pdf', defaultAfterSec: 60, nudgeDelaySec: 120,
+    });
+    assert.equal(askRes.ok, true);
+
+    // Owner pauses job
+    const pauseRes = store.submitSteering({
+      jobId: j1.jobId, sourceEventId: 'ev_own_pause', actorId: 'u_own', actorRole: 'owner', commandKind: 'pause',
+    });
+    assert.equal(pauseRes.ok, true);
+    assert.equal(store.getJob(j1.jobId).status, 'paused');
+    assert.equal(store.getJob(j1.jobId).pausedByRole, 'owner');
+
+    // Designated approver AND requester cannot resume owner pause (R3)
+    const appResume = store.submitSteering({
+      jobId: j1.jobId, sourceEventId: 'ev_app_res', actorId: 'u_app', commandKind: 'resume',
+    });
+    assert.equal(appResume.ok, false);
+    assert.equal(appResume.code, 'OWNER_PAUSE_LOCKED');
+
+    // EnqueueWake(reason='resume') without allowOwnerResume cannot bypass owner pause
+    const wkBypass = store.enqueueWake({ jobId: j1.jobId, reason: 'resume' });
+    assert.equal(wkBypass.woke, false);
+    assert.equal(store.getJob(j1.jobId).status, 'paused');
+
+    // Reap after defaultAfterSec (120s later) MUST NOT fire defaultOption or unpause owner-paused job (N1 Repro B)
+    now += 120_000;
+    const reapPaused = store.reap({ nowMs: now });
+    assert.equal(reapPaused.defaultedAsks.length, 0);
+    assert.equal(store.getJob(j1.jobId).status, 'paused');
+    assert.equal(store.getAsk(askRes.ask.askId).status, 'open');
+
+    // Requester answering ask records answer in eventInbox WITHOUT lifting owner pause (N1 Repro A)
+    const ansReq = store.answerAsk({ askId: askRes.ask.askId, actorId: 'u_req', answer: 'csv' });
+    assert.equal(ansReq.ok, true);
+    assert.equal(ansReq.wokeToQueued, false);
+    assert.equal(store.getJob(j1.jobId).status, 'paused');
+    assert.equal(store.getJob(j1.jobId).pausedByRole, 'owner');
+    const pausedClaim = store.claimJob({ jobId: j1.jobId, liveAuth: liveOk });
+    assert.equal(pausedClaim.ok, false);
+    assert.equal(pausedClaim.status, 'paused');
+
+    // Owner resume lifts pause and delivers buffered answer in eventInbox!
+    const ownRes = store.submitSteering({
+      jobId: j1.jobId, sourceEventId: 'ev_own_res', actorId: 'u_own', actorRole: 'owner', commandKind: 'resume',
+    });
+    assert.equal(ownRes.ok, true);
+    assert.equal(store.getJob(j1.jobId).status, 'queued');
+    const cAfter = store.claimJob({ jobId: j1.jobId, liveAuth: liveOk });
+    assert.equal(cAfter.ok, true);
+    assert.ok(cAfter.job.eventInbox.some((e) => e.type === 'requester_answer' && e.answer === 'csv'));
+
+    // B2: completeJob / failJob MUST refuse while effect intent is unresolved; late receipt must not mutate terminal job
+    const eff1 = store.recordEffectIntent({
+      jobId: j1.jobId, revision: cAfter.revision, jobEpoch: cAfter.jobEpoch, leaseToken: cAfter.leaseToken,
+      operationId: 'op_pending_1', tool: 'submit_form', args: { x: 1 },
+    });
+    assert.equal(eff1.ok, true);
+    assert.equal(store.completeJob({
+      jobId: j1.jobId, revision: eff1.revision, jobEpoch: cAfter.jobEpoch, leaseToken: cAfter.leaseToken,
+      summary: 'premature done',
+    }).code, 'UNRESOLVED_EFFECTS_PENDING');
+    assert.equal(store.failJob({
+      jobId: j1.jobId, revision: eff1.revision, jobEpoch: cAfter.jobEpoch, leaseToken: cAfter.leaseToken,
+      reason: 'premature fail',
+    }).code, 'UNRESOLVED_EFFECTS_PENDING');
+
+    // Settle effect -> completeJob succeeds -> late receipt leaves status completed
+    store.recordEffectReceipt({ jobId: j1.jobId, operationId: 'op_pending_1', status: 'succeeded', receipt: { id: 1 } });
+    const jDone = store.getJob(j1.jobId);
+    const doneRes = store.completeJob({
+      jobId: j1.jobId, revision: jDone.revision, jobEpoch: cAfter.jobEpoch, leaseToken: cAfter.leaseToken,
+      summary: 'all done',
+    });
+    assert.equal(doneRes.ok, true);
+    assert.equal(doneRes.job.status, 'completed');
+
+    // R1 / N2-A: Event-only companion sleep past 60m MUST NOT spin WakeBus at 25ms
+    const jComp = store.createJob({
+      goal: 'Wait for laptop online',
+      principals: { requester: { principalId: 'u_own' }, ownerIds: ['u_own'] },
+      budget: { horizonDays: 7 },
+    }).job;
+    const cComp = store.claimJob({ jobId: jComp.jobId });
+    store.parkJob({
+      jobId: jComp.jobId, revision: cComp.revision, jobEpoch: cComp.jobEpoch, leaseToken: cComp.leaseToken,
+      waitingFor: 'companion', checkpoint: { progressSummary: 'laptop closed' },
+    });
+    now += 2 * 3600_000; // 2 hours offline (> default 1h nextReviewAtMs)
+    const nextDueComp = store.getNextDueAtMs();
+    assert.ok(nextDueComp > now + 24 * 3600_000, `Expected future horizon only, got overdue ${nextDueComp - now}ms`);
+
+    // R2 / N2-B / H5: Horizon-expired job with unresolved effect enters reconciling, fires onReconcileDue (no spin), and has bounded exit
+    const jExp = store.createJob({
+      goal: 'Expiring with flying effect',
+      principals: { requester: { principalId: 'u_own' }, ownerIds: ['u_own'] },
+      budget: { horizonDays: 1 },
+    }).job;
+    const cExp = store.claimJob({ jobId: jExp.jobId });
+    store.recordEffectIntent({
+      jobId: jExp.jobId, revision: cExp.revision, jobEpoch: cExp.jobEpoch, leaseToken: cExp.leaseToken,
+      operationId: 'op_fly_exp', tool: 'wire', args: { amt: 10 },
+    });
+    // Jump past horizon
+    now = store.getJob(jExp.jobId).budget.expiresAtMs + 5_000;
+    const rExp1 = store.reap({ nowMs: now, reconcileStaleMs: 10_000, maxReconcileRounds: 2 });
+    assert.deepEqual(rExp1.movedToReconciling, [jExp.jobId]);
+    assert.equal(store.getJob(jExp.jobId).status, 'reconciling');
+    // getNextDueAtMs MUST return future reconcile wake (+15s), NOT past expiresAtMs (no 25ms spin!)
+    const nextDueRec = store.getNextDueAtMs();
+    assert.ok(nextDueRec >= now + 10_000, `Expected future reconcile wake, got delta ${nextDueRec - now}ms`);
+
+    // Advance +16s -> step 2b MUST run and report reconcilingDue (NOT skipped by horizon continue!)
+    now += 16_000;
+    const rExp2 = store.reap({ nowMs: now, reconcileStaleMs: 10_000, maxReconcileRounds: 2 });
+    assert.deepEqual(rExp2.reconcilingDue, [jExp.jobId]);
+    assert.equal(store.getJob(jExp.jobId).effectIntents.op_fly_exp.status, 'unknown');
+
+    // Advance +61s -> 2nd round reaches maxReconcileRounds=2 -> bounded terminal cancel + owner DM alert
+    now += 61_000;
+    const rExp3 = store.reap({ nowMs: now, reconcileStaleMs: 10_000, maxReconcileRounds: 2 });
+    assert.deepEqual(rExp3.reconcileExhausted, [jExp.jobId]);
+    assert.equal(store.getJob(jExp.jobId).status, 'cancelled');
+    assert.equal(store.getJob(jExp.jobId).failureCode, 'RECONCILE_EXHAUSTED_UNKNOWN_EFFECT');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('v2.20.1 Round-2 B3/B4/H9/H11: strict hydration, live-PID lock immunity, DST repeated-hour & spring-gap, outbox claimToken & per-card serialization', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scroll-v2201-r2-store-'));
+  try {
+    // H9: Fall-back repeated hour in America/New_York (2026-11-01 01:00-02:00 repeats)
+    const fallBackSecondHr = Date.parse('2026-11-01T06:15:00.000Z'); // 01:15 EST (2nd occurrence)
+    const qhNy = { start: '23:00', end: '01:30', tz: 'America/New_York' };
+    assert.equal(
+      new Date(nextNotificationWindowMs(fallBackSecondHr, qhNy)).toISOString(),
+      '2026-11-01T06:30:00.000Z',
+    );
+    const fallBackFirstHr = Date.parse('2026-11-01T05:15:00.000Z'); // 01:15 EDT (1st occurrence)
+    assert.equal(
+      new Date(nextNotificationWindowMs(fallBackFirstHr, qhNy)).toISOString(),
+      '2026-11-01T05:30:00.000Z',
+    );
+    // H9: Spring-forward gap (2026-03-08 02:30 NY does not exist -> resolves to 03:00 EDT = 07:00Z)
+    const springBeforeGap = Date.parse('2026-03-08T06:30:00.000Z'); // 01:30 EST
+    const qhSpring = { start: '23:00', end: '02:30', tz: 'America/New_York' };
+    assert.equal(
+      new Date(nextNotificationWindowMs(springBeforeGap, qhSpring)).toISOString(),
+      '2026-03-08T07:00:00.000Z',
+    );
+
+    // B3: Strict hydration rejects malformed rows & duplicate IDs fail-closed (preserves corrupt copy)
+    const badRowPath = path.join(dir, 'bad-row.json');
+    fs.writeFileSync(badRowPath, JSON.stringify({
+      schema: 'scroll-job/v1',
+      jobs: [{ notAJob: true }],
+      asks: [],
+      outbox: [],
+      steering: [],
+    }), 'utf8');
+    assert.throws(() => createDurableJobStore({ filePath: badRowPath }), /ERR_DURABLE_JOB_STORE_CORRUPT/);
+
+    const badOutboxPath = path.join(dir, 'bad-outbox.json');
+    fs.writeFileSync(badOutboxPath, JSON.stringify({
+      schema: 'scroll-job/v1',
+      jobs: [],
+      asks: [],
+      outbox: 'corrupted_not_array',
+      steering: [],
+    }), 'utf8');
+    assert.throws(() => createDurableJobStore({ filePath: badOutboxPath }), /ERR_DURABLE_JOB_STORE_CORRUPT/);
+
+    // B4: Aged lock held by LIVE same-host PID MUST NOT be stolen!
+    const liveLockStorePath = path.join(dir, 'live-lock.json');
+    const liveStore = createDurableJobStore({ filePath: liveLockStorePath });
+    const lockPath = `${liveLockStorePath}.lock`;
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, host: os.hostname(), nonce: 'live-owner', createdAt: Date.now() - 45_000 }));
+    const oldTime = new Date(Date.now() - 45_000);
+    fs.utimesSync(lockPath, oldTime, oldTime);
+    assert.throws(() => liveStore.createJob({ goal: 'Should not steal live PID lock' }), /ERR_JOB_STORE_LOCK_CONTENTION/);
+    // Clean up live lock and verify dead PID lock IS cleanly stolen
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 99999999, host: os.hostname(), nonce: 'dead-owner', createdAt: Date.now() - 10_000 }));
+    const okAfterDead = liveStore.createJob({ goal: 'Cleanly steals dead PID lock' });
+    assert.equal(okAfterDead.ok, true);
+
+    // H11: Outbox claimToken fencing + per-card progress_edit serialization + unclaimed-only coalescing
+    let now = 1_820_000_000_000;
+    const obStore = createDurableJobStore({ filePath: path.join(dir, 'ob.json'), clock: () => now });
+    const j = obStore.createJob({ goal: 'Outbox card test', principals: { requester: { principalId: 'u1' }, ownerIds: ['u1'] } }).job;
+    obStore.enqueueOutbox({ jobId: j.jobId, clientMessageId: 'ed_1', kind: 'progress_edit', channel: 'telegram', chatId: 'c1', editMessageId: 'card_1', payload: { step: 1 }, nowMs: now });
+    const cA = obStore.claimPendingOutbox({ workerId: 'wA', leaseMs: 30_000, nowMs: now });
+    assert.equal(cA.length, 1);
+    assert.ok(cA[0].claimToken && cA[0].claimToken.startsWith('clm_'));
+
+    // Enqueue ed_2 & ed_3 while ed_1 is in-flight: ed_1 stays pending/claimed; ed_2 is superseded by ed_3!
+    obStore.enqueueOutbox({ jobId: j.jobId, clientMessageId: 'ed_2', kind: 'progress_edit', channel: 'telegram', chatId: 'c1', editMessageId: 'card_1', payload: { step: 2 }, nowMs: now + 1000 });
+    obStore.enqueueOutbox({ jobId: j.jobId, clientMessageId: 'ed_3', kind: 'progress_edit', channel: 'telegram', chatId: 'c1', editMessageId: 'card_1', payload: { step: 3 }, nowMs: now + 2000 });
+    const obList = obStore.listOutbox({ jobId: j.jobId });
+    assert.equal(obList.find((x) => x.clientMessageId === 'ed_1').deliveryState, 'pending');
+    assert.equal(obList.find((x) => x.clientMessageId === 'ed_2').deliveryState, 'superseded');
+    assert.equal(obList.find((x) => x.clientMessageId === 'ed_3').deliveryState, 'pending');
+
+    // Worker B CANNOT claim ed_3 while ed_1 for the same card_1 is still in-flight!
+    assert.equal(obStore.claimPendingOutbox({ workerId: 'wB', leaseMs: 30_000, nowMs: now + 3000 }).length, 0);
+
+    // Wrong or missing claimToken CANNOT ack ed_1 while wA's lease is active!
+    assert.equal(obStore.markOutboxDelivery('ed_1', { deliveryState: 'sent', claimToken: 'wrong', nowMs: now + 3000 }).code, 'OUTBOX_CLAIM_TOKEN_MISMATCH');
+    assert.equal(obStore.markOutboxDelivery('ed_1', { deliveryState: 'sent', nowMs: now + 3000 }).code, 'OUTBOX_CLAIM_TOKEN_MISMATCH');
+
+    // Correct claimToken completes ed_1 -> now Worker B can claim ed_3!
+    assert.equal(obStore.markOutboxDelivery('ed_1', { deliveryState: 'sent', claimToken: cA[0].claimToken, nowMs: now + 4000 }).ok, true);
+    const cB = obStore.claimPendingOutbox({ workerId: 'wB', leaseMs: 30_000, nowMs: now + 5000 });
+    assert.equal(cB.length, 1);
+    assert.equal(cB[0].clientMessageId, 'ed_3');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('v2.20.1 Round-2 B5/B7/H6/H7/H2/H3/P2: tuple key isolation, compaction safety, pinned desktop mutex, receipt error separation, WakeBus re-entrancy & secret $&/JSON redaction', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scroll-v2201-r2-tr-'));
+  try {
+    let now = 1_820_000_000_000;
+
+    // B5 & H7: Unambiguous tuple keys (`a:b` + `c` != `a` + `b:c`) + compaction preserving newer live generation
+    const ledger = createAsyncRemoteJobLedger({
+      filePath: path.join(dir, 'tuple.jsonl'),
+      retentionMs: 60_000,
+      now: () => now,
+    });
+    const rA = ledger.accept({ deploymentId: 'a:b', deviceId: 'd1', operationId: 'c', tool: 't', args: { v: 1 } });
+    const rB = ledger.accept({ deploymentId: 'a', deviceId: 'd1', operationId: 'b:c', tool: 't', args: { v: 2 } });
+    assert.equal(rA.ok, true);
+    assert.equal(rB.ok, true);
+    assert.notEqual(rA.record.remoteJobId, rB.record.remoteJobId);
+    assert.equal(ledger.lookup('c', { deploymentId: 'a:b' }).remoteJobId, rA.record.remoteJobId);
+    assert.equal(ledger.lookup('b:c', { deploymentId: 'a' }).remoteJobId, rB.record.remoteJobId);
+
+    // H7: Expire rA, reuse same (deploymentId, operationId) as rA2 (also settled succeeded, unexpired) -> BOTH fresh load() AND compact() MUST preserve rA2!
+    ledger.updateStatus(rA.record.remoteJobId, { deploymentId: 'a:b', status: 'succeeded', receipt: { gen: 1 } });
+    now += 65_000; // rA expired
+    const rA2 = ledger.accept({ deploymentId: 'a:b', deviceId: 'd1', operationId: 'c', tool: 't', args: { v: 1 } });
+    assert.equal(rA2.ok, true);
+    assert.notEqual(rA2.record.remoteJobId, rA.record.remoteJobId);
+    ledger.updateStatus(rA2.record.remoteJobId, { deploymentId: 'a:b', status: 'succeeded', receipt: { gen: 2 } });
+    const reloaded = createAsyncRemoteJobLedger({
+      filePath: path.join(dir, 'tuple.jsonl'),
+      retentionMs: 60_000,
+      now: () => now,
+    });
+    assert.equal(reloaded.lookup('c', { deploymentId: 'a:b' })?.remoteJobId, rA2.record.remoteJobId);
+    const cmp = ledger.compact({ nowMs: now });
+    assert.equal(cmp.pruned, 1);
+    assert.equal(ledger.lookup('c', { deploymentId: 'a:b' })?.remoteJobId, rA2.record.remoteJobId);
+
+    // B7: Injected in-memory ledger (`isDurable: false`) MUST be refused for durable 202
+    const memLedger = createAsyncRemoteJobLedger({ now: () => now });
+    assert.equal(memLedger.isDurable, false);
+    const memHost = createCompanionToolHost({
+      deviceId: 'mac-mem',
+      allowlist: ['long_op'],
+      asyncJobLedger: memLedger,
+      handlers: { long_op: async () => ({ __asyncAccepted: true, run: async () => ({ ok: true }) }) },
+    });
+    const memRes = await memHost.handleEnvelope({ callId: 'c_mem', deploymentId: 'dep_m', deviceId: 'mac-mem', epoch: 1, tool: 'long_op', operationId: 'op_m' });
+    assert.equal(memRes.ok, false);
+    assert.match(memRes.error, /ERR_DURABLE_ASYNC_LEDGER_REQUIRED/);
+
+    // B7 / P1-20: DesktopMutex stays pinned during long async run past deadlineMs!
+    let finishDesktop = null;
+    const pinnedMutex = createDesktopMutex({ defaultLeaseMs: 1_000, now: () => now });
+    const pinLedger = createAsyncRemoteJobLedger({ filePath: path.join(dir, 'pin.jsonl'), now: () => now });
+    const pinHost = createCompanionToolHost({
+      deviceId: 'mac-pin',
+      allowlist: ['gui_long', 'gui_short'],
+      desktopTools: ['gui_long', 'gui_short'],
+      desktopMutex: pinnedMutex,
+      asyncJobLedger: pinLedger,
+      now: () => new Date(now),
+      handlers: {
+        gui_long: async () => ({
+          __asyncAccepted: true,
+          run: () => new Promise((resolve) => { finishDesktop = () => resolve({ painted: true }); }),
+        }),
+        gui_short: async () => ({ ok: true }),
+      },
+    });
+    const p1 = await pinHost.handleEnvelope({ callId: 'c1', deploymentId: 'dep_p', deviceId: 'mac-pin', epoch: 1, tool: 'gui_long', operationId: 'op_pin_1', deadlineMs: 1_000 });
+    assert.equal(p1.httpStatus, 202);
+    // Advance clock well past 1_000ms deadlineMs while runner is still active -> mutex MUST remain locked!
+    now += 120_000;
+    assert.equal(pinnedMutex.isLocked(), true);
+    // Unauthorized tool with high jobEpoch MUST NOT poison jobEpoch for valid tool!
+    const badTool = await pinHost.handleEnvelope({ callId: 'c_bad', deploymentId: 'dep_p', deviceId: 'mac-pin', epoch: 1, tool: 'not_allowed', jobId: 'j_ep', jobEpoch: 999 });
+    assert.equal(badTool.ok, false);
+    assert.match(badTool.error, /ERR_TOOL_NOT_ALLOWLISTED/);
+    finishDesktop();
+    await new Promise((r) => setTimeout(r, 15));
+    assert.equal(pinnedMutex.isLocked(), false);
+    // Valid tool with jobEpoch=1 succeeds (not poisoned by 999)
+    const okShort = await pinHost.handleEnvelope({ callId: 'c2', deploymentId: 'dep_p', deviceId: 'mac-pin', epoch: 1, tool: 'gui_short', jobId: 'j_ep', jobEpoch: 1 });
+    assert.equal(okShort.ok, true);
+
+    // H6: Receipt persistence throw after run() succeeds NEVER records status='failed'
+    let failNextPersist = true;
+    const baseLedger = createAsyncRemoteJobLedger({ filePath: path.join(dir, 'h6.jsonl'), now: () => now });
+    const flakyLedger = {
+      ...baseLedger,
+      isDurable: true,
+      updateStatus(id, opts) {
+        if (opts.status === 'succeeded' && failNextPersist) {
+          failNextPersist = false;
+          throw new Error('ENOSPC_DISK_FULL');
+        }
+        return baseLedger.updateStatus(id, opts);
+      },
+    };
+    const h6Host = createCompanionToolHost({
+      deviceId: 'mac-h6',
+      allowlist: ['pay_op'],
+      asyncJobLedger: flakyLedger,
+      now: () => new Date(now),
+      handlers: { pay_op: async () => ({ __asyncAccepted: true, run: async () => ({ paid: 'INV-7' }) }) },
+    });
+    const h6Acc = await h6Host.handleEnvelope({ callId: 'ch6', deploymentId: 'dep_h6', deviceId: 'mac-h6', epoch: 1, tool: 'pay_op', operationId: 'op_h6' });
+    assert.equal(h6Acc.httpStatus, 202);
+    await new Promise((r) => setTimeout(r, 20));
+    // Raw ledger must NOT have recorded `failed`; getRemoteJobStatus retries and persists `succeeded`!
+    assert.notEqual(baseLedger.lookup(h6Acc.remoteJobId, { deploymentId: 'dep_h6' }).status, 'failed');
+    const recH6 = h6Host.getRemoteJobStatus(h6Acc.remoteJobId, { deploymentId: 'dep_h6' });
+    assert.equal(recH6.status, 'succeeded');
+    assert.equal(recH6.receipt.paid, 'INV-7');
+
+    // H2 / H3 / P1-11: WakeBus strict tenant & targeted operationId correlation, retry on rejecting callback, non-deadlocking re-entrant tick()
+    const wStore = createDurableJobStore({ filePath: path.join(dir, 'wb.json'), clock: () => now });
+    const jW = wStore.createJob({ tenantId: 't_alpha', goal: 'Wait op_right', principals: { requester: { principalId: 'u1' }, ownerIds: ['u1'] } }).job;
+    const cW = wStore.claimJob({ jobId: jW.jobId });
+    wStore.parkJob({
+      jobId: jW.jobId, revision: cW.revision, jobEpoch: cW.jobEpoch, leaseToken: cW.leaseToken,
+      waitingFor: 'companion',
+      wakeOn: [{ type: 'remote_job_done', operationId: 'op_right' }],
+      checkpoint: { progressSummary: 'waiting op_right' },
+    });
+    let attempts = 0;
+    let reentrantResult = null;
+    const bus = createJobWakeBus({
+      store: wStore,
+      clock: () => now,
+      onJobQueued: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('transient_dispatch_error');
+        // Calling await bus.tick() from inside callback MUST NOT deadlock!
+        reentrantResult = await bus.tick({ nowMs: now });
+      },
+    });
+    // Broadcast companion.online WITHOUT tenantId MUST NOT wake t_alpha!
+    assert.equal((await bus.publishEvent({ type: 'companion.online', deviceId: 'mac-1' })).woken.length, 0);
+    // Targeted event with WRONG operationId MUST NOT wake job subscribed to op_right!
+    assert.equal((await bus.publishEvent({ type: 'remote_job_done', jobId: jW.jobId, operationId: 'op_WRONG' })).woken.length, 0);
+    // Targeted event with RIGHT operationId wakes job; 1st callback fails -> next tick retries and succeeds without deadlock!
+    const okEv = await bus.publishEvent({ type: 'remote_job_done', jobId: jW.jobId, operationId: 'op_right' });
+    assert.deepEqual(okEv.woken, [jW.jobId]);
+    assert.equal(attempts, 1);
+    await bus.tick({ nowMs: now });
+    assert.equal(attempts, 2);
+    assert.equal(reentrantResult?.deferred, true);
+
+    // FABLE P2 & CARBON P2: Secret `$&` label leak, JSON-escaped secret, bare STEP_UP_REQUIRED
+    const sVal = 'Pass"With\\Slash$1';
+    const redLabel = redactSecretsDeep({ msg: `token=${sVal}`, dumped: JSON.stringify({ k: sVal }) }, [{ name: 'n$&', value: sVal }]);
+    assert.equal(redLabel.msg, 'token=[secret:n$&]');
+    assert.ok(!redLabel.dumped.includes('Pass\\"With\\\\Slash$1'), 'JSON-escaped secret must be redacted');
+    assert.equal(classifyToolErrorDisposition({ code: 'STEP_UP_REQUIRED' }).disposition, 'park_waiting');
+    assert.equal(classifyToolErrorDisposition({ code: 'STEP_UP_REQUIRED' }).errorClass, 'needs_owner');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

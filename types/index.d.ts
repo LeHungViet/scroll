@@ -182,7 +182,7 @@ export interface DurableJobStore {
   completeJob(opts?: Record<string, unknown>): Record<string, unknown>;
   failJob(opts?: Record<string, unknown>): Record<string, unknown>;
   recordNegativeProbe(opts?: Record<string, unknown>): Record<string, unknown>;
-  reap(opts?: { nowMs?: number; reconcileStaleMs?: number }): Record<string, unknown>;
+  reap(opts?: { nowMs?: number; reconcileStaleMs?: number; maxReconcileRounds?: number }): Record<string, unknown>;
   boot(opts?: { nowMs?: number }): Record<string, unknown>;
   enqueueOutbox(opts: Record<string, unknown>): Record<string, unknown>;
   claimPendingOutbox(opts?: { workerId?: string; leaseMs?: number; limit?: number; nowMs?: number }): Array<Record<string, unknown>>;
@@ -200,10 +200,77 @@ export interface JobWakeBus {
   hasProbe(name: string): boolean;
   listProbes(): string[];
   publishEvent(event?: Record<string, unknown>, opts?: { nowMs?: number }): Promise<{ ok: boolean; code?: string; woken: string[]; buffered: string[] }>;
-  tick(opts?: { nowMs?: number; maxBatch?: number }): Promise<{ reap: Record<string, unknown>; woken: string[]; probedNegative: Array<Record<string, unknown>>; probeRejected: Array<Record<string, unknown>> }>;
+  tick(opts?: { nowMs?: number; maxBatch?: number }): Promise<{ deferred?: boolean; reap: Record<string, unknown> | null; woken: string[]; probedNegative: Array<Record<string, unknown>>; probeRejected: Array<Record<string, unknown>> }>;
   scheduleNextTimer(): void;
   start(): void;
   stop(): void;
+}
+export interface AsyncRemoteJobRecord {
+  schema: string;
+  remoteJobId: string;
+  operationId: string;
+  tenantId: string;
+  deploymentId: string;
+  deviceId: string;
+  tool: string;
+  argsHash: string;
+  status: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'unknown';
+  cancelRequested: boolean;
+  pollAfterSec: number;
+  receipt: unknown;
+  error: string | null;
+  createdAtMs: number;
+  updatedAtMs: number;
+  expiresAtMs: number;
+  receiptPersistencePending?: boolean;
+}
+export interface AsyncRemoteJobLedger {
+  readonly isDurable: boolean;
+  computeIdentityHash(opts?: { tool?: string; deviceId?: string; args?: Record<string, unknown> }): string;
+  accept(opts?: {
+    tenantId?: string;
+    deploymentId: string;
+    deviceId?: string;
+    operationId: string;
+    tool: string;
+    args?: Record<string, unknown>;
+    pollAfterSec?: number;
+  }): { ok: true; idempotent: boolean; record: AsyncRemoteJobRecord } | { ok: false; code: string; operationId?: string };
+  updateStatus(
+    idOrOp: string,
+    opts: {
+      deploymentId: string;
+      status: AsyncRemoteJobRecord['status'];
+      receipt?: unknown;
+      error?: string | null;
+      cancelRequested?: boolean | null;
+    },
+  ): { ok: true; alreadyTerminal?: boolean; record: AsyncRemoteJobRecord } | { ok: false; code: string };
+  lookup(idOrOp: string, opts: { deploymentId: string }): AsyncRemoteJobRecord | null;
+  compact(opts?: { nowMs?: number }): { ok: boolean; pruned: number; retained: number };
+}
+export interface FairShareResourceLease {
+  ok: true;
+  physicalResourceId: string;
+  groupKey: string;
+  waitedMs: number;
+  release(): boolean;
+}
+export interface FairShareResourceQueue {
+  acquire(opts?: {
+    physicalResourceId?: string;
+    tenantId?: string;
+    groupId?: string;
+    estimatedMs?: number;
+    signal?: AbortSignal | null;
+  }): Promise<FairShareResourceLease | { ok: false; code: string; groupKey?: string; maxPerGroupQueued?: number }>;
+  getStats(physicalResourceId?: string): {
+    physicalResourceId: string;
+    inFlightTotal: number;
+    queuedByGroup: Record<string, number>;
+    occupiedMsByGroup: Record<string, number>;
+    oldestEligibleAgeMs: number;
+  };
 }
 export interface VaultSecretProvider {
   tenantId: string;
@@ -265,8 +332,18 @@ export function computeDurableJobMetrics(opts?: Record<string, unknown>): Record
 export const REMOTE_JOB_SCHEMA: string;
 export const REMOTE_JOB_STATUSES: readonly string[];
 export const DEFAULT_REMOTE_JOB_RETENTION_MS: number;
-export function createAsyncRemoteJobLedger(opts?: Record<string, unknown>): Record<string, unknown>;
-export function createFairShareResourceQueue(opts?: Record<string, unknown>): Record<string, unknown>;
+export function createAsyncRemoteJobLedger(opts?: {
+  filePath?: string | null;
+  retentionMs?: number;
+  now?: () => number;
+}): AsyncRemoteJobLedger;
+export function createFairShareResourceQueue(opts?: {
+  maxPerGroupInFlight?: number;
+  maxPerGroupQueued?: number;
+  quantumMs?: number;
+  agingMs?: number;
+  now?: () => number;
+}): FairShareResourceQueue;
 export const SECRET_HANDLE_SCHEMA: string;
 export const SECRET_STEP_UP_MODES: readonly string[];
 export function isSecretHandle(val: unknown): boolean;
