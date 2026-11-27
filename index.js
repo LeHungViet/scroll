@@ -30,6 +30,7 @@ export * from './lib/tickets.js';
 export * from './lib/turn-context.js';
 export * from './lib/durable-jobs.js';
 export * from './lib/job-wake-bus.js';
+export * from './lib/autonomy.js';
 export * from './lib/app-preflight.js';
 export * from './lib/grounding.js';
 export * from './lib/style.js';
