@@ -1087,6 +1087,72 @@ SCROLL 2.7 completes the Gricean triad at the runtime boundary so every conforma
 
 ---
 
+## §57 — Durable Multi-Day Execution Kernel (`scroll-job/v1`, v2.16.1–v2.17.0)
+
+> Reference impl: `lib/tickets.js` (`computeTicketSpecHash` · `validateTicketUpdate` · `validateTicketTransitionScope` · `evaluateTicketTurnExit` · `assignExecutionOwner`) · `lib/turn-context.js` (`createTurnContextRegistry` · `clampBackgroundSliceMs`) · `lib/durable-jobs.js` (`createDurableJobStore` · `DURABLE_JOB_STATUSES` · `SCROLL_DURABLE_JOB_TOOL_SCHEMAS`) · tests `test/v2161-security-hardening.smoke.mjs`, `test/v217-durable-multiday.smoke.mjs`.
+
+- **Ticket Approval Hardening & Fail-Closed Turn Context (v2.16.1):** `Ticket` remains the immutable Approval & Audit layer (`specHash = SHA-256(canonical(actionSpec))`). `validateTicketUpdate()` rejects internal `_*` keys, cross-room/cross-agent edits, and post-approval `actionSpec` tampering. `validateTicketTransitionScope()` binds every execution transition to `(approvedTicketId, approvedSpecHash)`. `createTurnContextRegistry()` attaches an immutable opaque `turnToken` (via `AsyncLocalStorage`, TTL `>= turnTimeoutMs + 60s`) so concurrent rooms never share mutable `activeTurn` state or fall back to an Owner DM context; background execution slices are clamped to `<= 180s` (`clampBackgroundSliceMs`). `evaluateTicketTurnExit()` blocks bare `end_turn` auto-closing of in-flight work.
+- **Single Execution Engine (`DurableJob`, 8 Core States):** Tickets may delegate execution atomically (`assignExecutionOwner('durable')`) to a `DurableJob` record (`scroll-job/v1`) persisted via conditional compare-and-swap (`revision`, `jobEpoch`, `leaseToken`) under a file lock. Core statuses are strictly `queued | running | waiting | reconciling | paused | completed | failed | cancelled`, orthogonal to `waitingFor` (`external | requester | owner | approver | companion | approval`).
+- **Exactly-Once Side-Effect Reconciliation:** Before dispatching any side-effecting tool, the host persists an `effectIntent` keyed by deterministic `operationId` (`argsHash` conflict-checked) and fenced by `(jobEpoch, leaseToken)`. On host crash or lease expiry, the Periodic Reaper (`reap()`) transitions active jobs with in-flight intents to `reconciling` instead of blindly re-executing; `recordEffectReceipt` settles the intent deterministically, preventing duplicate side effects across 30-day replays.
+- **Two-Clock Budget & Statutory Lock:** Every job tracks active execution slices (`maxSlices`, `maxActiveMs`), wall-clock horizon (`horizonDays`: default 7d, hard ceiling 30d), and per-day caps (`maxSlicesPerDay`, `maxUsdPerDay`). When `statutoryLock: true`, horizon expiry transitions to `paused` and escalates to the owner rather than silently cancelling regulated filings or contracts (capped at 90 days).
+- **Explicit Exit Contract & Anti-Bailout:** Background slices cannot close on prose alone. `detectPoliteBailout()` (ASCII/NFD-folded) flags conversational bailouts ("I will check back later", "please check again") when no explicit `job_yield` / `job_complete` / `job_fail` / `ask_requester` / `escalate_owner` tool call occurred, converting premature exit into retry or owner escalation.
+- **Transactional Outbox & Edit-in-Place:** Status cards, progress edits, and final reports are written to an idempotent outbox keyed by `clientMessageId`. Negative probes only enqueue `progress_edit` updates against the live status card (`externalMessageId`), producing zero spam push messages; `quietHours` defers non-urgent notifications while never blocking execution or background probes.
+
+## §58 — Dual-Speed Wake Bus & 0-LLM Probes (v2.17.0)
+
+> Reference impl: `lib/job-wake-bus.js` (`createJobWakeBus`) · `lib/durable-jobs.js` (`computeTempoTier` · `computeNextProbeDelaySec`) · tests `test/v217-durable-multiday.smoke.mjs`.
+
+- **Separation from Cron Automations:** `job_yield` is strictly separate from recurring §49 `automations` — it has no `cron` syntax and no `match: all` wildcard. Jobs are woken by (a) event-driven `publishEvent()` (`< 5ms` wake, with callback-before-park buffering into `eventInbox` when a job is still `running`), (b) dynamic `MIN(nextDueAt)` scheduling, and (c) a 20-second safety sweep.
+- **3-Tempo Gears & Dual-Speed Backoff:** Jobs automatically classify into `micro` (`< 15m`), `sprint` (`15m–2h`, probe backoff `30s -> 60s -> 120s -> 180s`), or `marathon` (`> 2h` to `30d`, probe backoff `15m -> 30m -> 1h -> 4h`).
+- **Host-Registered Named 0-LLM Probes (Anti-SSRF):** `registerProbe(probeName, fn)` registers deterministic host probes. `job_yield` may only reference a registered `probeName` — raw URLs, hostnames, shell strings, or file paths are rejected fail-closed. Negative probes reschedule backoff and update the status card with zero LLM tokens and zero slice consumption.
+
+## §59 — Declarative `IDENTITY.autonomy`, 4-Branch Error Dispositions & Re-Observe First (v2.18.0)
+
+> Reference impl: `lib/autonomy.js` (`validateAutonomyConfig` · `resolveAutonomyConfig` · `classifyToolErrorDisposition` · `buildContinuationWorkLedger` · `validateReObserveBeforeGuiAction`) · `lib/scroll.js` · `lib/chat-session.js` · tests `test/v218-autonomy-async-reobserve.smoke.mjs`.
+
+- **Opt-In Autonomy Config:** `IDENTITY.md` may declare `autonomy: { mode: off | ask | continue_in_background, max_slices, max_wall_hours, max_active_minutes, max_usd_per_job, quiet_hours }` (default `mode: 'off'`, zero behavioral change for existing agents). `createChatSessionRuntime` invokes `onTurnExhausted` when an active turn hits round/timeout exhaustion under `ask` or `continue_in_background`.
+- **4-Branch Error Disposition:** `classifyToolErrorDisposition()` deterministically routes every tool failure into `abort_job` (permission/auth/scope revoked), `park_waiting` (companion offline, waiting for external resource), `retry_backoff` (429/5xx/network timeout), or `feed_llm_repair` (bad selector, validation error, stale UI element) so agents never waste LLM retries on unrecoverable permission blocks.
+- **Anchored Continuation Ledger & Re-Observe First:** `buildContinuationWorkLedger()` caps continuation summaries at `<= 25` lines with Line 0 permanently locked to `[GOAL]` to prevent multi-day goal drift. `validateReObserveBeforeGuiAction()` blocks any GUI/browser mutation (`browser_click`, `cua_act`, `desktop_click`, etc.) after a sleep/wake gap (`> 5m`) or host restart until a fresh observation tool (`isGuiObserveTool`) refreshes `checkpoint.lastObservedAtMs`.
+
+## §60 — Morning Digest Batching, Candidate-Only Wake Cues & Cadence Metrics (v2.19.0)
+
+> Reference impl: `lib/autonomy.js` (`buildMorningDigest` · `matchWakeCueCandidates` · `computeDurableJobMetrics`) · tests `test/v219-digest-wake-cues.smoke.mjs`.
+
+- **Anti-Fatigue Morning Digest:** `buildMorningDigest()` batches non-urgent multi-day updates after `quietHours` into a single compact digest per audience, respecting privacy projection (group rooms receive neutral summaries with zero owner-private diagnostics).
+- **Candidate-Only Natural-Language Wake Cues:** `matchWakeCueCandidates()` matches natural user follow-ups ("done", "paid", "verified") ONLY against jobs in the same room where the speaker is an authorized principal (`requester | owner | approver`). Strangers, cross-room messages, and ambiguous multi-job matches never auto-resume a job; ambiguous matches return candidates for explicit user confirmation.
+- **Cadence Metrics:** `computeDurableJobMetrics()` aggregates active jobs by tempo tier, probe efficiency ratio, and outbox/ask volume for operator observability.
+
+## §61 — Zero-Exposure `SecretProvider` (`scroll-secret-handle/v1`, v2.20.0)
+
+> Reference impl: `lib/secret-provider.js` (`createVaultSecretProvider` · `isSecretHandle` · `matchesAllowedDomain` · `redactSecretsDeep`) · `eval/multiday-cv-browser/runner.mjs` · tests `test/v220-secret-provider-and-eval.smoke.mjs`.
+
+- **Handles Only in Model Context:** Extending `lib/vault.js`, `createVaultSecretProvider()` lets the LLM reference credentials exclusively via opaque handles `{ $secret: "<name>", field: "<field>" }`. Raw secret bytes are resolved inside the host right before tool dispatch and scrubbed on the way back via `redactSecretsDeep()` (plaintext, URL-encoded, and Base64 variants).
+- **Hard Security Boundaries:**
+  1. **Owner-DM-Only:** Any resolution inside a group turn or a background slice originating from a group (`isGroup || originIsGroup`) fails closed with `ERR_SECRET_FORBIDDEN_IN_GROUP`.
+  2. **Declared `secret_args` Only:** Handles passed into non-secret tool arguments (e.g., selectors, URLs, prompts) fail with `ERR_UNDECLARED_SECRET_ARG`.
+  3. **Machine-Measured `secret_destination`:** Active browser/endpoint origin must match `allowedDomains` over HTTPS (`exact_or_subdomain`), blocking phishing redirects with `SECRET_DESTINATION_MISMATCH`.
+  4. **Step-Up Controls:** Secrets declare `stepUp: none | per_job_origin | each_use`. `per_job_origin` binds an explicit owner grant to `(name, jobId, origin)`; `each_use` elevates to `financial` tier and consumes a single-use token per call.
+- **72-Hour Deterministic Fault-Injection Eval:** `npm run eval:multiday` (`eval/multiday-cv-browser/runner.mjs`) compresses a 30-day multi-host CV/browser lifecycle into `< 1s` under a deterministic fake clock, verifying all 10 production Go/No-Go gates (CAS race, crash-after-202 reconciliation, callback-before-park, 16x 0-LLM probes, cancel-vs-dispatch race, steering scope reapproval, post-mutex permission drift, outbox dedupe, Fair-Share DRR, and Day-29 Re-Observe + phishing + 0-byte canary leak).
+
+## §62 — Companion Fair-Share DRR, Post-Mutex Fence & Async `202 Accepted` (`scroll-remote-job/v1`, v2.17.0–v2.18.0)
+
+> Reference impl: `lib/remote-tool-transport.js` (`createFairShareResourceQueue` · `createAsyncRemoteJobLedger` · `createCompanionToolHost` · `createRemoteToolClient`) · tests `test/v217-durable-multiday.smoke.mjs`, `test/v218-autonomy-async-reobserve.smoke.mjs`.
+
+- **Fair-Share DRR by Physical Resource (§62a):** `createFairShareResourceQueue()` enforces two-level Deficit Round-Robin scheduling keyed by `physicalResourceId` (with per-group queue caps, last-served rotation, and aging boost) so one noisy group cannot starve another group sharing the same desktop/browser host.
+- **Post-Mutex Resource Fence (§62a):** `createCompanionToolHost()` re-evaluates `verifyResourceFence` and `disallowGroupOriginTools` **after** acquiring `DesktopMutex` (and passes `checkFence()` into tool handlers), neutralizing TOCTOU permission drift (e.g., owner leaving a group while a job waited for desktop access).
+- **Async `202 Accepted` Protocol (§62b):** Long-running remote operations (`scroll-remote-job/v1`) return `{ status: 'accepted', remoteJobId, operationId, pollAfterSec }` backed by `createAsyncRemoteJobLedger()` (durable before returning `202`, 31-day receipt retention, `argsHash` conflict detection). `accepted` is never treated as `completed`; after a host crash before ACK, `getRemoteJobStatus(operationId)` reconciles cleanly without launching duplicate work, and `cancelRemoteJob()` propagates cancellation safely.
+
+## §63 — Multi-Principal Requester, Group Authority & Non-Blocking Human Dialogue (v2.17.0)
+
+> Reference impl: `lib/durable-jobs.js` (`evaluateEffectiveAuthority` · `evaluateSteeringPermission` · `projectJobForAudience` · `openAsk` · `answerAsk` · `submitSteering`) · tests `test/v217-durable-multiday.smoke.mjs`.
+
+- **Three Distinct Principals:** Every durable job separates `requester` (who initiated the task), `owner` (account/workspace owner), and `approver` (designated approver for gated tiers), applicable uniformly to both DM and group rooms.
+- **Intersection Authority (`effectiveScope = snapshot ∩ live`):** Every slice re-evaluates `evaluateEffectiveAuthority()` against live group membership, policy posture, and active grants. Revoking a grant or owner departure shrinks effective authority immediately without leaking privilege from an older snapshot.
+- **Non-Blocking Ask Protocol (`inlineWaitSec = 0`):** `ask_requester` (`choice | text | handoff`, strictly banning `kind: 'secret'`) and `escalate_owner` park the job immediately without holding the per-agent serial turn queue. `answerAsk()` enforces principal verification (blocking agents and unauthorized group members from answering on a requester's behalf), supports bounded 2-nudge-1-park cadences and Default-Unless-Vetoed policies.
+- **Verified Mid-Flight Steering (`intentRev`):** `submitSteering()` (`pause | resume | cancel | amend | redirect`) authorizes strictly by principal role, arbitrates `cancel` vs in-flight side effects via `cancel_requested -> reconciling -> cancelled`, and forces fresh approval (`REAPPROVAL_REQUIRED`) whenever an amendment expands capability scope.
+
+---
+
 ## Design note — §28–30 and the failure they answer
 
 §21 (risk), §22 (grounding) and §1.4 (enforce at the tool boundary) compensate for weaknesses of the *model*: it does not understand consequences, it hallucinates identifiers, it will not stop on its own.

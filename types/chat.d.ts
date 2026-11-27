@@ -151,3 +151,29 @@ export function createScrollChatRuntime(opts: {
   clearSession(convId: string): { ok: boolean };
   close(): Promise<void>;
 }>;
+
+// SCROLL 2.16.1-2.20.0 Durable Multi-Day Execution re-exports on `@agentpro/scroll/chat`
+export const DURABLE_JOB_SCHEMA: string;
+export const DURABLE_JOB_STATUSES: readonly string[];
+export const DURABLE_WAIT_REASONS: readonly string[];
+export const REMOTE_JOB_SCHEMA: string;
+export const SECRET_HANDLE_SCHEMA: string;
+export const SCROLL_DURABLE_JOB_TOOL_SCHEMAS: readonly Record<string, unknown>[];
+export function createTurnContextRegistry(opts?: Record<string, unknown>): Record<string, unknown>;
+export function clampBackgroundSliceMs(rawMs?: number): number;
+export function createDurableJobStore(opts: Record<string, unknown>): Record<string, unknown>;
+export function createJobWakeBus(opts: Record<string, unknown>): Record<string, unknown>;
+export function evaluateEffectiveAuthority(opts: Record<string, unknown>): Record<string, unknown>;
+export function evaluateSteeringPermission(opts: Record<string, unknown>): Record<string, unknown>;
+export function projectJobForAudience(job: Record<string, unknown>, opts?: Record<string, unknown>): Record<string, unknown>;
+export function createAsyncRemoteJobLedger(opts?: Record<string, unknown>): Record<string, unknown>;
+export function createFairShareResourceQueue(opts?: Record<string, unknown>): Record<string, unknown>;
+export function resolveAutonomyConfig(raw?: Record<string, unknown> | null): Record<string, unknown>;
+export function classifyToolErrorDisposition(errOrResult: unknown): Record<string, unknown>;
+export function buildContinuationWorkLedger(opts?: Record<string, unknown>): string;
+export function validateReObserveBeforeGuiAction(opts: Record<string, unknown>): Record<string, unknown>;
+export function buildMorningDigest(opts?: Record<string, unknown>): Record<string, unknown>;
+export function matchWakeCueCandidates(opts: Record<string, unknown>): Record<string, unknown>;
+export function computeDurableJobMetrics(opts?: Record<string, unknown>): Record<string, unknown>;
+export function createVaultSecretProvider(opts: Record<string, unknown>): Record<string, unknown>;
+export function redactSecretsDeep<T>(value: T, activeSecrets?: Array<{ name: string; value: string }>, depth?: number): T;
