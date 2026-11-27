@@ -1,5 +1,11 @@
 // SCROLL 2.5 TypeScript declarations for `@agentpro/scroll/chat`.
-import type { ChatTurnResult, ScrollProvider } from './index.d.ts';
+import type {
+  ChatTurnResult,
+  ScrollProvider,
+  DurableJobStore,
+  JobWakeBus,
+  VaultSecretProvider,
+} from './index.d.ts';
 
 export const ADMIN_CALLBACK_NAMESPACE: string;
 export const ALERTS_CALLBACK_NAMESPACE: string;
@@ -134,6 +140,8 @@ export function createScrollChatRuntime(opts: {
   providerName?: string;
   model?: string | null;
   voiceHooks?: Record<string, unknown> | null;
+  autonomy?: Record<string, unknown> | null;
+  onTurnExhausted?: ((ctx: Record<string, unknown>) => unknown) | null;
   [key: string]: unknown;
 }): Promise<{
   agentName: string;
@@ -152,7 +160,7 @@ export function createScrollChatRuntime(opts: {
   close(): Promise<void>;
 }>;
 
-// SCROLL 2.16.1-2.20.0 Durable Multi-Day Execution re-exports on `@agentpro/scroll/chat`
+// SCROLL 2.16.1-2.20.1 Durable Multi-Day Execution re-exports on `@agentpro/scroll/chat`
 export const DURABLE_JOB_SCHEMA: string;
 export const DURABLE_JOB_STATUSES: readonly string[];
 export const DURABLE_WAIT_REASONS: readonly string[];
@@ -161,19 +169,19 @@ export const SECRET_HANDLE_SCHEMA: string;
 export const SCROLL_DURABLE_JOB_TOOL_SCHEMAS: readonly Record<string, unknown>[];
 export function createTurnContextRegistry(opts?: Record<string, unknown>): Record<string, unknown>;
 export function clampBackgroundSliceMs(rawMs?: number): number;
-export function createDurableJobStore(opts: Record<string, unknown>): Record<string, unknown>;
-export function createJobWakeBus(opts: Record<string, unknown>): Record<string, unknown>;
-export function evaluateEffectiveAuthority(opts: Record<string, unknown>): Record<string, unknown>;
-export function evaluateSteeringPermission(opts: Record<string, unknown>): Record<string, unknown>;
-export function projectJobForAudience(job: Record<string, unknown>, opts?: Record<string, unknown>): Record<string, unknown>;
+export function createDurableJobStore(opts?: Record<string, unknown>): DurableJobStore;
+export function createJobWakeBus(opts: Record<string, unknown>): JobWakeBus;
+export function evaluateEffectiveAuthority(opts: Record<string, unknown>): { allowed: boolean; code: string; isGroup?: boolean; effectiveTools?: string[]; forbidSecrets?: boolean; forbidCaptchaHandoff?: boolean; parkWaitingFor?: string; reason?: string };
+export function evaluateSteeringPermission(opts: Record<string, unknown>): { allowed: boolean; effectiveRole?: string; requiresNewApproval?: boolean; unauthorizedCapabilities?: string[]; code: string; reason?: string };
+export function projectJobForAudience(job: Record<string, unknown>, opts?: Record<string, unknown>): Record<string, unknown> | null;
 export function createAsyncRemoteJobLedger(opts?: Record<string, unknown>): Record<string, unknown>;
 export function createFairShareResourceQueue(opts?: Record<string, unknown>): Record<string, unknown>;
 export function resolveAutonomyConfig(raw?: Record<string, unknown> | null): Record<string, unknown>;
-export function classifyToolErrorDisposition(errOrResult: unknown): Record<string, unknown>;
-export function buildContinuationWorkLedger(opts?: Record<string, unknown>): string;
-export function validateReObserveBeforeGuiAction(opts: Record<string, unknown>): Record<string, unknown>;
-export function buildMorningDigest(opts?: Record<string, unknown>): Record<string, unknown>;
-export function matchWakeCueCandidates(opts: Record<string, unknown>): Record<string, unknown>;
+export function classifyToolErrorDisposition(errOrResult: unknown): { disposition: 'abort_job' | 'park_waiting' | 'retry_backoff' | 'feed_llm_repair'; errorClass: string; retryable: boolean; parkWaitingFor: string | null; reason: string };
+export function buildContinuationWorkLedger(opts?: Record<string, unknown>): string[];
+export function validateReObserveBeforeGuiAction(opts: Record<string, unknown>): { allowed: boolean; code: string; reason?: string; reacquireAnchors?: unknown };
+export function buildMorningDigest(opts?: Record<string, unknown>): { shouldSend: boolean; reason: string; count?: number; items: Array<Record<string, unknown>>; text: string };
+export function matchWakeCueCandidates(opts?: Record<string, unknown>): { candidates: Array<Record<string, unknown>>; ambiguous: boolean; topCandidate: Record<string, unknown> | null };
 export function computeDurableJobMetrics(opts?: Record<string, unknown>): Record<string, unknown>;
-export function createVaultSecretProvider(opts: Record<string, unknown>): Record<string, unknown>;
+export function createVaultSecretProvider(opts?: Record<string, unknown>): VaultSecretProvider;
 export function redactSecretsDeep<T>(value: T, activeSecrets?: Array<{ name: string; value: string }>, depth?: number): T;

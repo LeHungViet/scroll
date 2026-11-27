@@ -151,7 +151,68 @@ export function buildCompanionCapabilitiesPrompt(opts?: {
   internalTools?: string[];
 }): string;
 export function createMultiRemoteToolClient(opts?: Record<string, unknown>): Record<string, unknown>;
-// SCROLL 2.16.1-2.20.0 (§57-§63) Durable Multi-Day Execution, Wake Bus, Autonomy, Companion Async 202 & SecretProvider
+// SCROLL 2.16.1-2.20.1 (sec 57-63) Durable Multi-Day Execution, Wake Bus, Autonomy, Companion Async 202 & SecretProvider
+export interface AsyncRemoteJobAccepted {
+  ok: true;
+  accepted: true;
+  status: 'accepted';
+  operationId: string;
+  remoteJobId: string | null;
+  pollAfterSec: number;
+  deviceId: string;
+  callId: string;
+}
+export interface NormalizedOrigin {
+  origin: string;
+  hostname: string;
+  protocol: string;
+}
+export interface DurableJobStore {
+  filePath: string | null;
+  createJob(spec?: Record<string, unknown>): Record<string, unknown>;
+  claimJob(opts?: Record<string, unknown>): Record<string, unknown>;
+  parkJob(opts?: Record<string, unknown>): Record<string, unknown>;
+  enqueueWake(opts?: Record<string, unknown>): Record<string, unknown>;
+  recordEffectIntent(opts?: Record<string, unknown>): Record<string, unknown>;
+  recordEffectReceipt(opts?: Record<string, unknown>): Record<string, unknown>;
+  openAsk(opts?: Record<string, unknown>): Record<string, unknown>;
+  answerAsk(opts?: Record<string, unknown>): Record<string, unknown>;
+  submitSteering(opts?: Record<string, unknown>): Record<string, unknown>;
+  ackSteeringApplied(opts?: Record<string, unknown>): Record<string, unknown>;
+  completeJob(opts?: Record<string, unknown>): Record<string, unknown>;
+  failJob(opts?: Record<string, unknown>): Record<string, unknown>;
+  recordNegativeProbe(opts?: Record<string, unknown>): Record<string, unknown>;
+  reap(opts?: { nowMs?: number; reconcileStaleMs?: number }): Record<string, unknown>;
+  boot(opts?: { nowMs?: number }): Record<string, unknown>;
+  enqueueOutbox(opts: Record<string, unknown>): Record<string, unknown>;
+  claimPendingOutbox(opts?: { workerId?: string; leaseMs?: number; limit?: number; nowMs?: number }): Array<Record<string, unknown>>;
+  markOutboxDelivery(clientMessageId: string, opts?: Record<string, unknown>): Record<string, unknown>;
+  getJob(jobId: string): Record<string, unknown> | null;
+  listJobs(filter?: { status?: string | null; agentId?: string | null; chatId?: string | null }): Array<Record<string, unknown>>;
+  getAsk(askId: string): Record<string, unknown> | null;
+  listAsks(filter?: { jobId?: string | null; status?: string | null }): Array<Record<string, unknown>>;
+  listOutbox(filter?: { jobId?: string | null; deliveryState?: string | null }): Array<Record<string, unknown>>;
+  getNextDueAtMs(): number | null;
+  assertTransition(from: string, to: string): boolean;
+}
+export interface JobWakeBus {
+  registerProbe(name: string, fn: (ctx: Record<string, unknown>) => unknown): string;
+  hasProbe(name: string): boolean;
+  listProbes(): string[];
+  publishEvent(event?: Record<string, unknown>, opts?: { nowMs?: number }): Promise<{ ok: boolean; code?: string; woken: string[]; buffered: string[] }>;
+  tick(opts?: { nowMs?: number; maxBatch?: number }): Promise<{ reap: Record<string, unknown>; woken: string[]; probedNegative: Array<Record<string, unknown>>; probeRejected: Array<Record<string, unknown>> }>;
+  scheduleNextTimer(): void;
+  start(): void;
+  stop(): void;
+}
+export interface VaultSecretProvider {
+  tenantId: string;
+  putSecret(opts?: Record<string, unknown>): { ok: boolean; name: string; stepUp: string; allowedDomains: string[] };
+  grantPerJobOrigin(opts?: Record<string, unknown>): Record<string, unknown>;
+  issueEachUseToken(opts?: Record<string, unknown>): Record<string, unknown>;
+  resolveToolArgs(opts?: Record<string, unknown>): Record<string, unknown>;
+  listPolicies(): Array<Record<string, unknown>>;
+}
 export const DEFAULT_TURN_TIMEOUT_MS: number;
 export const DEFAULT_TURN_TOKEN_GRACE_MS: number;
 export const BACKGROUND_SLICE_DEFAULT_MS: number;
@@ -160,12 +221,12 @@ export function normalizeTurnContext(raw?: Record<string, unknown>, opts?: { now
 export function computeTurnTokenTtlMs(opts?: { turnTimeoutMs?: number; graceMs?: number }): number;
 export function clampBackgroundSliceMs(rawMs?: number): number;
 export function createTurnContextRegistry(opts?: Record<string, unknown>): Record<string, unknown>;
-export function computeTicketSpecHash(actionSpec: unknown): string;
+export function computeTicketSpecHash(actionSpec: unknown): string | null;
 export function findForbiddenInternalKeys(value: unknown, prefix?: string, out?: string[]): string[];
 export function sanitizeTicketPayloadPatch(value: unknown, depth?: number): unknown;
-export function validateTicketUpdate(opts: Record<string, unknown>): { ok: boolean; code?: string; reason?: string; sanitizedPatch?: Record<string, unknown> };
-export function validateTicketTransitionScope(opts: Record<string, unknown>): { ok: boolean; code?: string; reason?: string };
-export function evaluateTicketTurnExit(opts: Record<string, unknown>): { ok: boolean; action: string; code?: string; reason?: string };
+export function validateTicketUpdate(opts: Record<string, unknown>): { allowed: boolean; code: string; reason?: string; forbiddenKeys?: string[] };
+export function validateTicketTransitionScope(opts: Record<string, unknown>): { allowed: boolean; code: string; reason?: string };
+export function evaluateTicketTurnExit(opts: Record<string, unknown>): { action: string; code: string; allowAutoClose: boolean; implicitYieldCount?: number; recoverCount?: number };
 export const DURABLE_JOB_SCHEMA: string;
 export const DURABLE_JOB_STATUSES: readonly string[];
 export const DURABLE_TERMINAL_STATUSES: ReadonlySet<string>;
@@ -183,23 +244,23 @@ export function computeTempoTier(opts?: Record<string, unknown>): 'micro' | 'spr
 export function computeNextProbeDelaySec(opts?: Record<string, unknown>): number;
 export function isWithinQuietHours(nowMs: number, quietHours?: Record<string, unknown> | null): boolean;
 export function nextNotificationWindowMs(nowMs: number, quietHours?: Record<string, unknown> | null, opts?: { urgent?: boolean }): number;
-export function detectPoliteBailout(replyText: string, opts?: Record<string, unknown>): { bailout: boolean; reason?: string };
-export function evaluateEffectiveAuthority(opts: Record<string, unknown>): { allowed: boolean; code?: string; effectiveTools: string[]; reason?: string };
-export function evaluateSteeringPermission(opts: Record<string, unknown>): { allowed: boolean; code?: string; reapprovalRequired?: boolean; reason?: string };
-export function projectJobForAudience(job: Record<string, unknown>, opts?: { isOwner?: boolean; isGroup?: boolean; chatId?: string | null }): Record<string, unknown>;
-export function createDurableJobStore(opts: Record<string, unknown>): Record<string, unknown>;
-export function createJobWakeBus(opts: Record<string, unknown>): Record<string, unknown>;
+export function detectPoliteBailout(replyText: string, opts?: Record<string, unknown>): { detected: boolean; code?: string; reason: string };
+export function evaluateEffectiveAuthority(opts: Record<string, unknown>): { allowed: boolean; code: string; isGroup?: boolean; effectiveTools?: string[]; forbidSecrets?: boolean; forbidCaptchaHandoff?: boolean; parkWaitingFor?: string; reason?: string };
+export function evaluateSteeringPermission(opts: Record<string, unknown>): { allowed: boolean; effectiveRole?: string; requiresNewApproval?: boolean; unauthorizedCapabilities?: string[]; code: string; reason?: string };
+export function projectJobForAudience(job: Record<string, unknown>, opts?: { isOwner?: boolean; isGroup?: boolean; chatId?: string | null }): Record<string, unknown> | null;
+export function createDurableJobStore(opts?: Record<string, unknown>): DurableJobStore;
+export function createJobWakeBus(opts: Record<string, unknown>): JobWakeBus;
 export const AUTONOMY_MODES: readonly string[];
 export const ERROR_DISPOSITIONS: readonly string[];
 export const DEFAULT_AUTONOMY_CONFIG: Readonly<Record<string, unknown>>;
 export function validateAutonomyConfig(raw: unknown): { ok: boolean; errors: string[] };
 export function resolveAutonomyConfig(raw?: Record<string, unknown> | null): Record<string, unknown>;
-export function classifyToolErrorDisposition(errOrResult: unknown): { disposition: 'abort_job' | 'park_waiting' | 'retry_backoff' | 'feed_llm_repair'; reason: string };
-export function buildContinuationWorkLedger(opts?: Record<string, unknown>): string;
-export function validateReObserveBeforeGuiAction(opts: Record<string, unknown>): { allowed: boolean; code?: string; reason?: string };
+export function classifyToolErrorDisposition(errOrResult: unknown): { disposition: 'abort_job' | 'park_waiting' | 'retry_backoff' | 'feed_llm_repair'; errorClass: string; retryable: boolean; parkWaitingFor: string | null; reason: string };
+export function buildContinuationWorkLedger(opts?: Record<string, unknown>): string[];
+export function validateReObserveBeforeGuiAction(opts: Record<string, unknown>): { allowed: boolean; code: string; reason?: string; reacquireAnchors?: unknown };
 export function isGuiObserveTool(toolName: string, observeTools?: ReadonlySet<string>): boolean;
-export function buildMorningDigest(opts?: Record<string, unknown>): Record<string, unknown>;
-export function matchWakeCueCandidates(opts: Record<string, unknown>): Record<string, unknown>;
+export function buildMorningDigest(opts?: Record<string, unknown>): { shouldSend: boolean; reason: string; count?: number; items: Array<Record<string, unknown>>; text: string };
+export function matchWakeCueCandidates(opts?: Record<string, unknown>): { candidates: Array<Record<string, unknown>>; ambiguous: boolean; topCandidate: Record<string, unknown> | null };
 export function computeDurableJobMetrics(opts?: Record<string, unknown>): Record<string, unknown>;
 export const REMOTE_JOB_SCHEMA: string;
 export const REMOTE_JOB_STATUSES: readonly string[];
@@ -209,7 +270,7 @@ export function createFairShareResourceQueue(opts?: Record<string, unknown>): Re
 export const SECRET_HANDLE_SCHEMA: string;
 export const SECRET_STEP_UP_MODES: readonly string[];
 export function isSecretHandle(val: unknown): boolean;
-export function normalizeOrigin(rawOrigin: string): string | null;
+export function normalizeOrigin(rawOrigin: string): NormalizedOrigin | null;
 export function matchesAllowedDomain(activeOrigin: string, allowedDomains?: string[], opts?: { matchMode?: string }): boolean;
 export function redactSecretsDeep<T>(value: T, activeSecrets?: Array<{ name: string; value: string }>, depth?: number): T;
-export function createVaultSecretProvider(opts: Record<string, unknown>): Record<string, unknown>;
+export function createVaultSecretProvider(opts?: Record<string, unknown>): VaultSecretProvider;

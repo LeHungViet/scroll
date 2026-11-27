@@ -1,6 +1,6 @@
 {
   "name": "@agentpro/scroll-telegram",
-  "version": "2.20.0",
+  "version": "2.20.1",
   "description": "Zero-dependency Telegram multi-bot fleet adapter for @agentpro/scroll (polling, inline /admin UI, HITL approval buttons, multimodal vision, cron delivery, and plugin hooks).",
   "type": "module",
   "main": "src/index.js",
@@ -24,7 +24,7 @@
   ],
   "dependencies": {},
   "peerDependencies": {
-    "@agentpro/scroll": "^2.20.0"
+    "@agentpro/scroll": "^2.20.1"
   },
   "license": "MIT"
 }

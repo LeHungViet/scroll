@@ -104,7 +104,8 @@ test('SCROLL 2.18: §62b Companion Async 202 (scroll-remote-job/v1) never maps 2
         vm_render_deck: async (args) => ({
           __asyncAccepted: true,
           pollAfterSec: 15,
-          run: () => new Promise((resolve) => {
+          run: ({ signal }) => new Promise((resolve, reject) => {
+            if (signal) signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
             releaseRender = () => resolve({ ok: true, outputPath: `/out/${args.deck}.pptx` });
           }),
         }),
@@ -146,12 +147,13 @@ test('SCROLL 2.18: §62b Companion Async 202 (scroll-remote-job/v1) never maps 2
     assert.equal(day30.status, 'succeeded');
     assert.equal(day30.receipt.outputPath, '/out/q4.pptx');
 
-    // 5. Cancel an in-flight async remote job cleanly
+    // 5. Cancel an in-flight async remote job cleanly (strictly scoped by deploymentId)
     const res2 = await client.invoke('vm_render_deck', { deck: 'cancel_me' }, { operationId: 'op_render_2' });
     assert.equal(res2.status, 'accepted');
-    const cancelled = host.cancelRemoteJob(res2.remoteJobId);
+    const cancelled = host.cancelRemoteJob(res2.remoteJobId, { deploymentId: 'dep_1' });
     assert.equal(cancelled.ok, true);
-    assert.equal(host.getRemoteJobStatus(res2.remoteJobId).status, 'cancelled');
+    await new Promise((r) => setTimeout(r, 15));
+    assert.equal(host.getRemoteJobStatus(res2.remoteJobId, { deploymentId: 'dep_1' }).status, 'cancelled');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -166,6 +168,7 @@ test('SCROLL 2.18: Default-Unless-Vetoed, 2-Nudge-1-Park (respecting quietHours)
   const j1 = store.createJob({
     goal: 'Export weekly report',
     principals: { requester: { principalId: 'u_req' }, ownerIds: ['u_own'] },
+    authority: { ticketId: 'tk_dm_1' },
   }).job;
   const c1 = store.claimJob({ jobId: j1.jobId });
   const a1 = store.openAsk({
@@ -176,6 +179,7 @@ test('SCROLL 2.18: Default-Unless-Vetoed, 2-Nudge-1-Park (respecting quietHours)
     targetRole: 'requester',
     kind: 'choice',
     question: 'Export weekly or both tabs?',
+    options: [{ id: 'weekly', label: 'Weekly' }, { id: 'both_tabs', label: 'Both tabs' }],
     defaultOption: 'both_tabs',
     defaultAfterSec: 1200,
   });
@@ -183,6 +187,7 @@ test('SCROLL 2.18: Default-Unless-Vetoed, 2-Nudge-1-Park (respecting quietHours)
   now += 1205 * 1000;
   const r1 = store.reap({ nowMs: now });
   assert.deepEqual(r1.defaultedAsks, [a1.ask.askId]);
+  assert.deepEqual(r1.defaultedJobIds, [j1.jobId]);
   assert.equal(store.getJob(j1.jobId).status, 'queued');
   assert.equal(store.getAsk(a1.ask.askId).answer.value, 'both_tabs');
 
@@ -190,6 +195,7 @@ test('SCROLL 2.18: Default-Unless-Vetoed, 2-Nudge-1-Park (respecting quietHours)
   const j2 = store.createJob({
     goal: 'Need client contract code',
     principals: { requester: { principalId: 'u_req' }, ownerIds: ['u_own'] },
+    authority: { ticketId: 'tk_dm_2' },
   }).job;
   const c2 = store.claimJob({ jobId: j2.jobId });
   const a2 = store.openAsk({
@@ -214,6 +220,7 @@ test('SCROLL 2.18: Default-Unless-Vetoed, 2-Nudge-1-Park (respecting quietHours)
   const j3 = store.createJob({
     goal: 'Submit form',
     principals: { requester: { principalId: 'u_req' }, ownerIds: ['u_own'] },
+    authority: { ticketId: 'tk_dm_3' },
   }).job;
   const c3 = store.claimJob({ jobId: j3.jobId });
   store.recordEffectIntent({

@@ -71,8 +71,9 @@ test('SCROLL 2.17: CAS claim, stale-epoch fencing, effectIntent crash -> reconci
     assert.equal(dup.job.jobId, jobId);
 
     // Two workers race to claim -> only worker A wins
-    const claimA = store.claimJob({ jobId, workerId: 'wA', leaseMs: 60_000 });
-    const claimB = store.claimJob({ jobId, workerId: 'wB', leaseMs: 60_000 });
+    const liveGroupOk = { botInRoom: true, ownerInRoom: true };
+    const claimA = store.claimJob({ jobId, workerId: 'wA', leaseMs: 60_000, liveAuth: liveGroupOk });
+    const claimB = store.claimJob({ jobId, workerId: 'wB', leaseMs: 60_000, liveAuth: liveGroupOk });
     assert.equal(claimA.ok, true);
     assert.equal(claimA.jobEpoch, 1);
     assert.equal(claimB.ok, false);
@@ -111,7 +112,7 @@ test('SCROLL 2.17: CAS claim, stale-epoch fencing, effectIntent crash -> reconci
     store.recordEffectReceipt({ jobId, operationId: 'op_submit_day1', status: 'succeeded', receipt: { confirmation: 'CONF-48' } });
     store.enqueueWake({ jobId, reason: 'reconciled' });
     now += 28 * 24 * 60 * 60 * 1000; // jump to Day 29
-    const claimDay29 = store.claimJob({ jobId, workerId: 'wC', leaseMs: 60_000 });
+    const claimDay29 = store.claimJob({ jobId, workerId: 'wC', leaseMs: 60_000, liveAuth: liveGroupOk });
     assert.equal(claimDay29.ok, true);
     assert.equal(claimDay29.jobEpoch, 2);
 
@@ -194,12 +195,14 @@ test('SCROLL 2.17: Dual-Speed Sprint/Marathon, callback-before-park, 0-LLM Host 
     });
 
     // Sprint job created at 22:05 local time STILL EXECUTES immediately (quietHours only suppresses human notifications)
+    const liveOk = { botInRoom: true, ownerInRoom: true };
     const j = store.createJob({
       goal: 'Export 30-minute video render and deliver',
       principals: { requester: { principalId: 'u_req' }, ownerIds: ['u_own'] },
       audienceRoom: { channel: 'telegram', chatId: '-1001', isGroup: true },
+      authority: { ticketId: 'tk_sprint_1', policySnapshot: { groupPolicy: 'owner_or_approve', ownerInRoom: true } },
     }).job;
-    const c1 = store.claimJob({ jobId: j.jobId, workerId: 'w1' });
+    const c1 = store.claimJob({ jobId: j.jobId, workerId: 'w1', liveAuth: liveOk });
     assert.equal(c1.ok, true);
 
     // Park with Sprint probe (30s -> 60s -> 120s -> 180s)
@@ -244,7 +247,7 @@ test('SCROLL 2.17: Dual-Speed Sprint/Marathon, callback-before-park, 0-LLM Host 
     assert.deepEqual(tWake.woken, [j.jobId]);
 
     // Callback-before-park race: event arrives while job is still `running`, then parkJob immediately wakes!
-    const c2 = store.claimJob({ jobId: j.jobId, workerId: 'w2' });
+    const c2 = store.claimJob({ jobId: j.jobId, workerId: 'w2', liveAuth: liveOk });
     const earlyEv = await bus.publishEvent({ type: 'remote_job_done', jobId: j.jobId, operationId: 'op_fast' });
     assert.deepEqual(earlyEv.buffered, [j.jobId]);
     const p2 = store.parkJob({
@@ -261,7 +264,7 @@ test('SCROLL 2.17: Dual-Speed Sprint/Marathon, callback-before-park, 0-LLM Host 
     assert.equal(p2.job.status, 'queued');
 
     // Unregistered probe rejected (anti-SSRF)
-    const c3 = store.claimJob({ jobId: j.jobId, workerId: 'w3' });
+    const c3 = store.claimJob({ jobId: j.jobId, workerId: 'w3', liveAuth: liveOk });
     store.parkJob({
       jobId: j.jobId,
       revision: c3.revision,
@@ -321,16 +324,17 @@ test('SCROLL 2.17: §63 3-principal Group Authority, Permission Drift, ask_reque
     assert.equal(driftClaim.waitingFor, 'authority');
 
     // Restore owner presence -> claim succeeds with secret/captcha forbidden for group origin
+    const liveAuthWithHash = { botInRoom: true, ownerInRoom: true, liveSpecHash: 'sha256:abc', allowedTools: ['browser_read', 'doc_create', 'secret_fill'] };
     const authOk = evaluateEffectiveAuthority({
       job,
-      liveAuth: { botInRoom: true, ownerInRoom: true, allowedTools: ['browser_read', 'doc_create', 'secret_fill'] },
+      liveAuth: liveAuthWithHash,
     });
     assert.equal(authOk.allowed, true);
     assert.equal(authOk.forbidSecrets, true);
     assert.ok(!authOk.effectiveTools.includes('secret_fill'));
 
     store.enqueueWake({ jobId: job.jobId, reason: 'owner_returned' });
-    const c1 = store.claimJob({ jobId: job.jobId, liveAuth: { botInRoom: true, ownerInRoom: true } });
+    const c1 = store.claimJob({ jobId: job.jobId, liveAuth: liveAuthWithHash });
     assert.equal(c1.ok, true);
 
     // 2. ask_requester parks immediately (inlineWaitSec=0), blocks agent self-answer & stranger answer
@@ -360,7 +364,7 @@ test('SCROLL 2.17: §63 3-principal Group Authority, Permission Drift, ask_reque
     assert.equal(ansOk.job.status, 'queued');
 
     // 3. escalate_owner routes ONLY to Owner DM + neutral projection in group (no private DM notes leaked!)
-    const c2 = store.claimJob({ jobId: job.jobId });
+    const c2 = store.claimJob({ jobId: job.jobId, liveAuth: liveAuthWithHash });
     const esc = store.openAsk({
       jobId: job.jobId,
       revision: c2.revision,

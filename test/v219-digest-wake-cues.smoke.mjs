@@ -14,22 +14,25 @@ test('SCROLL 2.19: Morning Digest batches >24h quiet Marathon jobs per room and 
   const quietHours = { start: '22:00', end: '07:30', tz: 'Asia/Ho_Chi_Minh' };
   const store = createDurableJobStore({ clock: () => now, quietHours });
 
+  const liveOk = { botInRoom: true, ownerInRoom: true };
   const j1 = store.createJob({
     goal: 'Track portal filing #101',
     principals: { requester: { principalId: 'u1' }, ownerIds: ['u_own'] },
     audienceRoom: { channel: 'telegram', chatId: '-1001', isGroup: true },
+    authority: { ticketId: 'tk_d1', policySnapshot: { groupPolicy: 'owner_or_approve', ownerInRoom: true } },
     budget: { horizonDays: 10 },
   }).job;
-  const c1 = store.claimJob({ jobId: j1.jobId });
+  const c1 = store.claimJob({ jobId: j1.jobId, liveAuth: liveOk });
   store.parkJob({ jobId: j1.jobId, revision: c1.revision, jobEpoch: c1.jobEpoch, leaseToken: c1.leaseToken, waitingFor: 'external', sleepSec: 3600, checkpoint: { milestone: 'awaiting_agency' } });
 
   const j2 = store.createJob({
     goal: 'Monitor supplier quote #202',
     principals: { requester: { principalId: 'u2' }, ownerIds: ['u_own'] },
     audienceRoom: { channel: 'telegram', chatId: '-1001', isGroup: true },
+    authority: { ticketId: 'tk_d2', policySnapshot: { groupPolicy: 'owner_or_approve', ownerInRoom: true } },
     budget: { horizonDays: 7 },
   }).job;
-  const c2 = store.claimJob({ jobId: j2.jobId });
+  const c2 = store.claimJob({ jobId: j2.jobId, liveAuth: liveOk });
   store.openAsk({ jobId: j2.jobId, revision: c2.revision, jobEpoch: c2.jobEpoch, leaseToken: c2.leaseToken, targetRole: 'owner', kind: 'handoff', question: 'Sensitive owner check' });
 
   // After 2 hours -> too fresh for 24h digest
@@ -50,12 +53,14 @@ test('SCROLL 2.19: Morning Digest batches >24h quiet Marathon jobs per room and 
 
 test('SCROLL 2.19: Wake Cues act strictly as authorized candidates and block strangers, cross-room, and ambiguity', () => {
   const store = createDurableJobStore();
+  const liveOk = { botInRoom: true, ownerInRoom: true };
   const j1 = store.createJob({
     goal: 'Prepare monthly financial workbook',
     principals: { requester: { principalId: 'u_req', externalId: 'tg:55' }, ownerIds: ['u_own'] },
     audienceRoom: { channel: 'telegram', chatId: '-1001', isGroup: true },
+    authority: { ticketId: 'tk_w1', policySnapshot: { groupPolicy: 'owner_or_approve', ownerInRoom: true } },
   }).job;
-  const c1 = store.claimJob({ jobId: j1.jobId });
+  const c1 = store.claimJob({ jobId: j1.jobId, liveAuth: liveOk });
   const a1 = store.openAsk({
     jobId: j1.jobId,
     revision: c1.revision,
@@ -105,8 +110,9 @@ test('SCROLL 2.19: Wake Cues act strictly as authorized candidates and block str
     goal: 'Prepare supplier budget workbook',
     principals: { requester: { principalId: 'u_req', externalId: 'tg:55' }, ownerIds: ['u_own'] },
     audienceRoom: { channel: 'telegram', chatId: '-1001', isGroup: true },
+    authority: { ticketId: 'tk_w2', policySnapshot: { groupPolicy: 'owner_or_approve', ownerInRoom: true } },
   }).job;
-  const c2 = store.claimJob({ jobId: j2.jobId });
+  const c2 = store.claimJob({ jobId: j2.jobId, liveAuth: liveOk });
   store.openAsk({
     jobId: j2.jobId,
     revision: c2.revision,
