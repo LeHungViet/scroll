@@ -987,7 +987,20 @@ test('v2.20.1 Round-3 Sign-Off: pause->resume lock laundering blocked (owner & s
     assert.equal(store.submitSteering({ jobId: jStat.jobId, sourceEventId: 'sp_req', actorId: 'u_req', commandKind: 'pause' }).code, 'OWNER_PAUSE_LOCKED');
     assert.equal(store.submitSteering({ jobId: jStat.jobId, sourceEventId: 'sp_app', actorId: 'u_app', commandKind: 'pause' }).code, 'OWNER_PAUSE_LOCKED');
     assert.equal(store.submitSteering({ jobId: jStat.jobId, sourceEventId: 'sr_req', actorId: 'u_req', commandKind: 'resume' }).code, 'OWNER_PAUSE_LOCKED');
+    assert.equal(store.submitSteering({ jobId: jStat.jobId, sourceEventId: 'sr_app', actorId: 'u_app', commandKind: 'resume' }).code, 'OWNER_PAUSE_LOCKED');
     assert.equal(store.getJob(jStat.jobId).pausedReason, 'statutory');
+
+    // FABLE P2: Owner pausing a running job then resuming before checkpoint clears pausedByRole cleanly
+    const jRunPR = store.createJob({
+      goal: 'Running owner pause-resume metadata cleanup',
+      principals: { requester: { principalId: 'u_req' }, ownerIds: ['u_own'] },
+    }).job;
+    store.claimJob({ jobId: jRunPR.jobId });
+    assert.equal(store.submitSteering({ jobId: jRunPR.jobId, sourceEventId: 'rpr_p', actorId: 'u_own', actorRole: 'owner', commandKind: 'pause' }).ok, true);
+    assert.equal(store.getJob(jRunPR.jobId).pausedByRole, 'owner');
+    assert.equal(store.submitSteering({ jobId: jRunPR.jobId, sourceEventId: 'rpr_r', actorId: 'u_own', actorRole: 'owner', commandKind: 'resume' }).ok, true);
+    assert.equal(store.getJob(jRunPR.jobId).pausedByRole, null);
+    assert.equal(store.getJob(jRunPR.jobId).pausedReason, null);
 
     // 2. ASTRA/CARBON P1: Async 202 `accepted`/`running` effect ages to `unknown` & exits via maxReconcileRounds + step 4 never clobbers reconciling
     const j202 = store.createJob({
