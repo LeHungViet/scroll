@@ -28,6 +28,8 @@ export * from './lib/voice-engine.js';
 export * from './lib/channels/index.js';
 export * from './lib/tickets.js';
 export * from './lib/turn-context.js';
+export * from './lib/durable-jobs.js';
+export * from './lib/job-wake-bus.js';
 export * from './lib/app-preflight.js';
 export * from './lib/grounding.js';
 export * from './lib/style.js';
