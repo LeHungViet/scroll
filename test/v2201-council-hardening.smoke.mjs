@@ -948,3 +948,165 @@ test('v2.20.1 Round-2 B5/B7/H6/H7/H2/H3/P2: tuple key isolation, compaction safe
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('v2.20.1 Round-3 Sign-Off: pause->resume lock laundering blocked (owner & statutory), accepted/running reconcile exit, live-bus zero spin, strict hydration, disjoint remoteJobId, expired-pin guard, cancel vs pending receipt & stale outbox ack', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scroll-v2201-r3-'));
+  try {
+    let now = 1_830_000_000_000;
+    const store = createDurableJobStore({ filePath: path.join(dir, 'jobs.json'), clock: () => now });
+    const liveOk = { botInRoom: true, ownerInRoom: true, groupPolicy: 'owner_or_approve', allowedTools: ['browser_open'] };
+
+    // 1. FABLE/CARBON P0: Owner pause + Statutory pause CANNOT be relabeled via non-owner `pause -> resume` or `enqueueWake`
+    const j1 = store.createJob({
+      goal: 'Owner & statutory lock immunity',
+      principals: { requester: { principalId: 'u_req' }, ownerIds: ['u_own'], approver: { principalId: 'u_app' } },
+      audienceRoom: { channel: 'telegram', chatId: '-10088', isGroup: true },
+      authority: { ticketId: 't_r3_1', policySnapshot: { groupPolicy: 'owner_or_approve', isOwnerSender: false } },
+    }).job;
+    assert.equal(store.submitSteering({ jobId: j1.jobId, sourceEventId: 'p_own', actorId: 'u_own', actorRole: 'owner', commandKind: 'pause' }).ok, true);
+    for (const [tag, actorId] of [['req', 'u_req'], ['app', 'u_app']]) {
+      const rp = store.submitSteering({ jobId: j1.jobId, sourceEventId: `p_${tag}`, actorId, commandKind: 'pause' });
+      assert.equal(rp.ok, false);
+      assert.equal(rp.code, 'OWNER_PAUSE_LOCKED');
+      assert.equal(store.getJob(j1.jobId).pausedByRole, 'owner');
+      const rr = store.submitSteering({ jobId: j1.jobId, sourceEventId: `r_${tag}`, actorId, commandKind: 'resume' });
+      assert.equal(rr.ok, false);
+      assert.equal(rr.code, 'OWNER_PAUSE_LOCKED');
+    }
+    assert.equal(store.enqueueWake({ jobId: j1.jobId, reason: 'resume' }).woke, false);
+
+    // Statutory pause lock immunity against requester & approver pause -> resume
+    const jStat = store.createJob({
+      goal: 'Statutory filing lock',
+      principals: { requester: { principalId: 'u_req' }, ownerIds: ['u_own'], approver: { principalId: 'u_app' } },
+      budget: { horizonDays: 1, statutoryLock: true },
+    }).job;
+    now = store.getJob(jStat.jobId).budget.expiresAtMs + 1000;
+    store.reap({ nowMs: now });
+    assert.equal(store.getJob(jStat.jobId).pausedReason, 'statutory');
+    assert.equal(store.submitSteering({ jobId: jStat.jobId, sourceEventId: 'sp_req', actorId: 'u_req', commandKind: 'pause' }).code, 'OWNER_PAUSE_LOCKED');
+    assert.equal(store.submitSteering({ jobId: jStat.jobId, sourceEventId: 'sp_app', actorId: 'u_app', commandKind: 'pause' }).code, 'OWNER_PAUSE_LOCKED');
+    assert.equal(store.submitSteering({ jobId: jStat.jobId, sourceEventId: 'sr_req', actorId: 'u_req', commandKind: 'resume' }).code, 'OWNER_PAUSE_LOCKED');
+    assert.equal(store.getJob(jStat.jobId).pausedReason, 'statutory');
+
+    // 2. ASTRA/CARBON P1: Async 202 `accepted`/`running` effect ages to `unknown` & exits via maxReconcileRounds + step 4 never clobbers reconciling
+    const j202 = store.createJob({
+      goal: 'Async 202 bounded reconcile',
+      principals: { requester: { principalId: 'u_own' }, ownerIds: ['u_own'] },
+      budget: { horizonDays: 1 },
+    }).job;
+    const c202 = store.claimJob({ jobId: j202.jobId });
+    store.recordEffectIntent({ jobId: j202.jobId, revision: c202.revision, jobEpoch: c202.jobEpoch, leaseToken: c202.leaseToken, operationId: 'op_202', tool: 'render', args: { x: 1 } });
+    store.recordEffectReceipt({ jobId: j202.jobId, operationId: 'op_202', status: 'accepted', remoteJobId: 'rj_abc' });
+    now = store.getJob(j202.jobId).budget.expiresAtMs + 1000;
+    store.reap({ nowMs: now, reconcileStaleMs: 10_000, maxReconcileRounds: 2 });
+    assert.equal(store.getJob(j202.jobId).status, 'reconciling');
+    now += 16_000;
+    store.reap({ nowMs: now, reconcileStaleMs: 10_000, maxReconcileRounds: 2 });
+    assert.equal(store.getJob(j202.jobId).effectIntents.op_202.status, 'unknown');
+    now += 61_000;
+    const rEx = store.reap({ nowMs: now, reconcileStaleMs: 10_000, maxReconcileRounds: 2 });
+    assert.deepEqual(rEx.reconcileExhausted, [j202.jobId]);
+    assert.equal(store.getJob(j202.jobId).status, 'cancelled');
+
+    // 3. FABLE N2 live-bus tick-count check: overdue companion sleep & reconciling expired job do NOT spin over 300ms!
+    const spinStore = createDurableJobStore({ filePath: path.join(dir, 'spin.json'), clock: () => now });
+    const jCS = spinStore.createJob({ goal: 'Companion live bus', principals: { requester: { principalId: 'u_own' }, ownerIds: ['u_own'] }, budget: { horizonDays: 7 } }).job;
+    const cCS = spinStore.claimJob({ jobId: jCS.jobId });
+    spinStore.parkJob({ jobId: jCS.jobId, revision: cCS.revision, jobEpoch: cCS.jobEpoch, leaseToken: cCS.leaseToken, waitingFor: 'companion', checkpoint: { progressSummary: 'offline' } });
+    now += 2 * 3600_000;
+    let spinTicks = 0;
+    const origReap = spinStore.reap;
+    const wrappedSpin = { ...spinStore, reap: (o) => { spinTicks += 1; return origReap(o); } };
+    const spinBus = createJobWakeBus({ store: wrappedSpin, clock: () => now, safetySweepMs: 60_000 });
+    spinBus.start();
+    await new Promise((r) => setTimeout(r, 300));
+    spinBus.stop();
+    assert.ok(spinTicks <= 2, `Expected <=2 ticks on overdue companion sleep, got ${spinTicks}`);
+
+    // 4. ASTRA B3: Missing collections & malformed effectIntent entry fail closed on hydration
+    const missingColPath = path.join(dir, 'missing-col.json');
+    fs.writeFileSync(missingColPath, JSON.stringify({ schema: 'scroll-job/v1', jobs: [] }), 'utf8');
+    assert.throws(() => createDurableJobStore({ filePath: missingColPath }), /ERR_DURABLE_JOB_STORE_CORRUPT/);
+    const badEffPath = path.join(dir, 'bad-eff.json');
+    fs.writeFileSync(badEffPath, JSON.stringify({
+      schema: 'scroll-job/v1',
+      jobs: [{ jobId: 'j_bad', status: 'queued', effectIntents: { op1: { status: 'BOGUS_STATUS' } } }],
+      asks: [], outbox: [], steering: [],
+    }), 'utf8');
+    assert.throws(() => createDurableJobStore({ filePath: badEffPath }), /ERR_DURABLE_JOB_STORE_CORRUPT/);
+
+    // 5. ASTRA H11: Late ack with expired/cleared claimToken on superseded edit is REJECTED
+    const obStore = createDurableJobStore({ filePath: path.join(dir, 'ob3.json'), clock: () => now });
+    const jOb = obStore.createJob({ goal: 'Outbox supersede', principals: { requester: { principalId: 'u1' }, ownerIds: ['u1'] } }).job;
+    obStore.enqueueOutbox({ jobId: jOb.jobId, clientMessageId: 'e1', kind: 'progress_edit', channel: 'telegram', chatId: 'c1', editMessageId: 'card1', payload: { v: 1 }, nowMs: now });
+    const cl1 = obStore.claimPendingOutbox({ workerId: 'w1', leaseMs: 5_000, nowMs: now })[0];
+    // Claim expires -> e2 supersedes e1 -> late ack from w1 with old token MUST fail!
+    obStore.enqueueOutbox({ jobId: jOb.jobId, clientMessageId: 'e2', kind: 'progress_edit', channel: 'telegram', chatId: 'c1', editMessageId: 'card1', payload: { v: 2 }, nowMs: now + 10_000 });
+    const lateAck = obStore.markOutboxDelivery('e1', { deliveryState: 'sent', claimToken: cl1.claimToken, nowMs: now + 10_500 });
+    assert.equal(lateAck.ok, false);
+    assert.equal(lateAck.code, 'OUTBOX_SUPERSEDED');
+
+    // 6. ASTRA B5/B7/H6: Disjoint operationId vs remoteJobId, expired DesktopMutex before pin(), and cancelRemoteJob preserving pendingSuccessReceipts
+    const led = createAsyncRemoteJobLedger({ filePath: path.join(dir, 'led3.jsonl'), now: () => now });
+    const first = led.accept({ deploymentId: 'dep1', deviceId: 'd1', operationId: 'op_first', tool: 't', args: {} });
+    const collide = led.accept({ deploymentId: 'dep1', deviceId: 'd1', operationId: first.record.remoteJobId, tool: 't', args: {} });
+    assert.equal(collide.ok, false);
+    assert.equal(collide.code, 'ERR_OPERATION_ID_COLLIDES_REMOTE_JOB_ID');
+
+    // B7: DesktopMutex expires during slow synchronous handler await -> pin(true) returns false -> ERR_DESKTOP_MUTEX_EXPIRED & run() never executes!
+    let runInvoked = false;
+    const expMutex = createDesktopMutex({ defaultLeaseMs: 1_000, now: () => now });
+    const expHost = createCompanionToolHost({
+      deviceId: 'mac-exp',
+      allowlist: ['slow_gui'],
+      desktopTools: ['slow_gui'],
+      desktopMutex: expMutex,
+      asyncJobLedger: led,
+      now: () => new Date(now),
+      handlers: {
+        slow_gui: async () => {
+          now += 5_000; // simulate lease expiry during handler await
+          return { __asyncAccepted: true, run: async () => { runInvoked = true; return { ok: true }; } };
+        },
+      },
+    });
+    const expRes = await expHost.handleEnvelope({ callId: 'cexp', deploymentId: 'dep1', deviceId: 'mac-exp', epoch: 1, tool: 'slow_gui', operationId: 'op_exp', deadlineMs: 1_000 });
+    assert.equal(expRes.ok, false);
+    assert.match(expRes.error, /ERR_DESKTOP_MUTEX_EXPIRED/);
+    assert.equal(runInvoked, false);
+
+    // H6: Pending unpersisted success receipt CANNOT be overwritten to `cancelled` by late cancelRemoteJob!
+    let blockPersist = true;
+    const baseLed = createAsyncRemoteJobLedger({ filePath: path.join(dir, 'h6r3.jsonl'), now: () => now });
+    const flakyLed = {
+      ...baseLed,
+      isDurable: true,
+      updateStatus(id, opts) {
+        if (opts.status === 'succeeded' && blockPersist) throw new Error('ENOSPC');
+        return baseLed.updateStatus(id, opts);
+      },
+    };
+    const h6Host = createCompanionToolHost({
+      deviceId: 'mac-h6r3',
+      allowlist: ['wire_op'],
+      asyncJobLedger: flakyLed,
+      now: () => new Date(now),
+      handlers: { wire_op: async () => ({ __asyncAccepted: true, run: async () => ({ tx: 'TX-SAVED' }) }) },
+    });
+    const acc = await h6Host.handleEnvelope({ callId: 'c_h6r3', deploymentId: 'dep_h6', deviceId: 'mac-h6r3', epoch: 1, tool: 'wire_op', operationId: 'op_h6r3' });
+    await new Promise((r) => setTimeout(r, 20));
+    // Cancel arrives while success receipt persistence is still failing -> MUST NOT mark cancelled!
+    const canWhilePending = h6Host.cancelRemoteJob(acc.remoteJobId, { deploymentId: 'dep_h6' });
+    assert.equal(canWhilePending.ok, true);
+    assert.equal(canWhilePending.record.status, 'succeeded');
+    assert.equal(canWhilePending.record.receipt.tx, 'TX-SAVED');
+    // Disk comes back -> getRemoteJobStatus flushes `succeeded` cleanly
+    blockPersist = false;
+    const flushed = h6Host.getRemoteJobStatus(acc.remoteJobId, { deploymentId: 'dep_h6' });
+    assert.equal(flushed.status, 'succeeded');
+    assert.equal(baseLed.lookup(acc.remoteJobId, { deploymentId: 'dep_h6' }).status, 'succeeded');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

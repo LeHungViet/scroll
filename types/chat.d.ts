@@ -5,9 +5,25 @@ import type {
   DurableJobStore,
   JobWakeBus,
   VaultSecretProvider,
+  AsyncRemoteJobRecord,
   AsyncRemoteJobLedger,
+  FairShareResourceLease,
   FairShareResourceQueue,
+  NormalizedOrigin,
+  AsyncRemoteJobAccepted,
 } from './index.d.ts';
+
+export type {
+  DurableJobStore,
+  JobWakeBus,
+  VaultSecretProvider,
+  AsyncRemoteJobRecord,
+  AsyncRemoteJobLedger,
+  FairShareResourceLease,
+  FairShareResourceQueue,
+  NormalizedOrigin,
+  AsyncRemoteJobAccepted,
+};
 
 export const ADMIN_CALLBACK_NAMESPACE: string;
 export const ALERTS_CALLBACK_NAMESPACE: string;
